@@ -119,7 +119,7 @@ function applyPeriod(){
   const P=yr?{arr:[30304,18548],tr:[30304-21557,18548-12901],home:null,eyebrow:'Brandon + Kennedy · Nov 18, 2025 – Nov 17, 2026',when:'in the last 12 months'}
             :{arr:[2580,1844],tr:[610,445],home:null,eyebrow:'Brandon + Kennedy · Oct 1–31, 2026',when:'in October'};
   SITES.bhp.transfers=P.tr[0];SITES.ken.transfers=P.tr[1];TRANSFERS=P.tr[0]+P.tr[1];
-  DIR={bhp:P.arr[0]-P.tr[0],ken:P.arr[1]-P.tr[1]};HOME=P.home;PERIOD=P;
+  DIR={bhp:P.arr[0]-P.tr[0],ken:P.arr[1]-P.tr[1]};HOME=P.home;PERIOD=P;SITES.bhp.direct=DIR.bhp;SITES.ken.direct=DIR.ken;
   let totals=alloc(TRANSFERS,BASE_STAGES[0].map(n=>n[1]));
   STAGES=BASE_STAGES.map((stg,s)=>{const inflow={};
     const res=stg.map(([t,,out],i)=>{const keys=Object.keys(out),a=alloc(totals[i],keys.map(k=>out[k])),o={};
@@ -136,12 +136,12 @@ const ORD=['First','Second','Third','Fourth'];
 let cfg={bhpDirect:1970,kenDirect:1399,ppf:50,period:'year',placeholder:false,edited:false};
 try{const s=JSON.parse(localStorage.getItem('fsedJourneyCfg4')||'null'); if(s&&typeof s==='object') cfg=Object.assign(cfg,s);}catch(e){}
 const fmt=n=>Math.round(n).toLocaleString('en-US');
-const pct=(n,d)=>(d?Math.round(n/d*100):0)+'%';
+const pct=(n,d)=>{const v=d?n/d*100:0;return (v>0&&v<10?v.toFixed(1):Math.round(v))+'%';};
 
 /* ================= ENGINE ================= */
 const W=1600,H=860,cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let clock=0,speed=1,playing=false,snap=false,idx=-1,stepEnd=0,steps=[];
-let nodes={},cols=[],fsed,dis,home,amc,figs=[],tweens=[],links=[],S={};
+let nodes={},cols=[],fsed,dis,home,amc,hah,figs=[],tweens=[],links=[],S={};
 const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -198,21 +198,22 @@ function build(){
   const colX=[520,746,972,1198];
   STAGES.forEach((st,s)=>{
     const list=st.map(([t,total,out])=>nodes[s+'_'+t]={id:s+'_'+t,type:t,stage:s,label:TYPES[t].label,color:TYPES[t].color,total,out,cap:Math.ceil(total/ppf)+2});
-    layoutCol(list,colX[s],168,70,H-18); cols.push(list);
+    layoutCol(s===0?list.filter(n=>n.type!=='HAH'):list,colX[s],168,70,H-18); cols.push(list);
   });
   layoutCol([fsed],24,180,70,H-18);
   const direct=DIR.bhp+DIR.ken;
   const nD=Math.round(direct/ppf);
   home=nodes.home={id:'home',label:'Discharged home',color:HOME_COLOR,cap:nD+3};
   amc=nodes.amc={id:'amc',label:'Transfer to AMC',color:AMC_COLOR,cap:nT+2};
-  layoutCol([home,amc],250,220,70,H-18);
-  home.pctOf=amc.pctOf=direct+TRANSFERS;
+  hah=nodes['0_HAH'];  /* Hospital at Home straight from the FSED is its own bucket, not an AMC first stop */
+  layoutCol([home,amc,hah],250,220,70,H-18);
+  home.pctOf=amc.pctOf=hah.pctOf=direct+TRANSFERS;
   dis=nodes.dis={id:'dis',label:'Discharged',color:DIS_COLOR,x:1432,y:96,w:144,h:H-116,cap:nT+6};
   for(const cw of [14,12,10,9,8,7,6,5,4,3,2]){dis.cw=cw;dis.ch=cw*1.6;dis.cols=Math.floor((dis.w-12)/cw);dis.rows=Math.floor((dis.h-12)/dis.ch);if(dis.cols*dis.rows>=dis.cap)break;}
   buildSteps(); reset();
   const sc=document.getElementById('scrub'); sc.max=steps.length-1;
   document.getElementById('note').textContent='Each figure is about '+ppf+' patients. '+(cfg.period==='year'
-    ?'Arrivals, discharges and transfers are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026; “Transfer to AMC” is every arrival not discharged from the FSED. The stops inside AMC are the October 2026 journey tracker scaled proportionally to that 12-month count, and the split from each stop to the next is estimated.'
+    ?'Arrivals, discharges and transfers are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026; Everyone not discharged from the FSED is split into Transfer to AMC and Hospital at Home in October’s proportions. The stops after that are the October 2026 journey tracker scaled proportionally to that 12-month count, and the split from each stop to the next is estimated.'
     :'Stop totals match the October 2026 journey tracker ('+fmt(TRANSFERS)+' hospital-bound encounters). FSED arrivals are 142.7 a day × 31 days with the site split read off the chart, and the split from each stop to the next is estimated.');
 }
 function reset(){
@@ -250,29 +251,33 @@ function buildSteps(){
   const add=(title,sub,dur,fn,ph)=>steps.push({title,sub,dur,fn,ph});
   const bT=SITES.bhp.transfers+DIR.bhp,kT=SITES.ken.transfers+DIR.ken,tot=bT+kT,direct=DIR.bhp+DIR.ken;
   const ppf=cfg.ppf,nT=Math.max(1,Math.round(TRANSFERS/ppf)),nD=Math.round(direct/ppf);
+  const al0=alloc(nT,cols[0].map(c=>c.total)),nH=al0[cols[0].indexOf(hah)],nA=nT-nH,AMCN=TRANSFERS-hah.total;
   add('Two free-standing EDs','BHP saw '+fmt(bT)+' patients and Kennedy saw '+fmt(kT)+' '+PERIOD.when+'.',3.2,()=>{
     tween(S,'intro',1,.7);tween(S,'bhpN',bT,1.6,.3);tween(S,'kenN',kT,1.6,.3);},true);
   add('Together they are the FSED',fmt(tot)+' patients through one front door.',3.2,()=>{
     S.intro=1;S.bhpN=bT;S.kenN=kT; tween(S,'merge',1,1.5);tween(fsed,'vis',1,.6,.9);tween(S,'big',1,.6,1);fsed.arr=tot;tween(fsed,'shown',tot,1.2,.9);},true);
   add('A patient walks in','Follow them from the FSED door to their eventual discharge.',2.8,()=>{
     S.heroA=1;tween(S,'heroX',fsed.x+fsed.w/2,2);tween(S,'big',0,.5);});
-  add('Bucket 1 · Discharged home',fmt(direct)+' of '+fmt(tot)+' ('+pct(direct,tot)+') never go to AMC'+(HOME?': '+fmt(HOME.d)+' discharged, '+fmt(HOME.l)+' left before or during care, '+fmt(HOME.o)+' other.':'.'),5.5,()=>{
+  add('Bucket 1 · Discharged home',fmt(direct)+' of '+fmt(tot)+' ('+pct(direct,tot)+') are discharged from the FSED and never go to AMC.',5.5,()=>{
     cool();tween(S,'heroA',0,.4);stream(home,nD,direct,2.8);});
-  add('Bucket 2 · Transfer to AMC',fmt(TRANSFERS)+' of '+fmt(tot)+' ('+pct(TRANSFERS,tot)+') leave the FSED for the main campus: '+fmt(SITES.bhp.transfers)+' from BHP, '+fmt(SITES.ken.transfers)+' from Kennedy.',4.5,()=>{
-    cool();stream(amc,nT,TRANSFERS,1.8);});
+  add('Bucket 2 · Transfer to AMC',fmt(AMCN)+' of '+fmt(tot)+' ('+pct(AMCN,tot)+') leave the FSED for the main campus.',4.5,()=>{
+    cool();stream(amc,nA,AMCN,1.8);});
+  add('Bucket 3 · Hospital at Home',fmt(hah.total)+' of '+fmt(tot)+' ('+pct(hah.total,tot)+') are admitted to Hospital at Home straight from the FSED: not discharged, and not transferred to AMC.',4,()=>{
+    cool();stream(hah,nH,hah.total,1);});
   cols[0].forEach((n,i)=>{
-    add('Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(TRANSFERS)+' transfers ('+pct(n.total,TRANSFERS)+') go here first.',n.total<TRANSFERS*.04?2.2:3,()=>{
-      cool(); if(!amc.al)amc.al=alloc(amc.figs.length,cols[0].map(c=>c.total));
-      send(amc,n,n.total,amc.al[i]);});
+    if(n===hah)return;
+    add('Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(AMCN)+' transfers ('+pct(n.total,AMCN)+') go here first.',n.total<TRANSFERS*.04?2.2:3,()=>{
+      cool();send(amc,n,n.total,al0[i]);});
     add('From '+n.label+', where next?','Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
   });
+  add('From Hospital at Home (bucket 3), where next?','Of '+fmt(hah.total)+': '+outText(hah)+'.',3,()=>{cool();split(hah);});
   for(let s=1;s<3;s++)cols[s].forEach(n=>{
     add(ORD[s]+' stop · '+n.label,'Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.01?1.8:n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
   });
   const last=cols[3].reduce((a,n)=>a+n.total,0);
   add('Fourth stop and beyond','The last '+fmt(last)+' patients finish their hospital course and are discharged.',4,()=>{cool();cols[3].forEach(n=>split(n));});
   const byStage=STAGES.map(st=>st.reduce((a,[, ,o])=>a+(o.DIS||0),0));
-  add('Every patient followed to discharge',fmt(tot)+' arrivals. '+fmt(direct)+' never went to AMC. '+fmt(TRANSFERS)+' transferred to AMC and were discharged after one stop ('+fmt(byStage[0])+'), two ('+fmt(byStage[1])+'), three ('+fmt(byStage[2])+') or four and more ('+fmt(byStage[3])+').',4,()=>{cool();});
+  add('Every patient followed to discharge',fmt(tot)+' arrivals: '+fmt(direct)+' discharged home ('+pct(direct,tot)+'), '+fmt(AMCN)+' transferred to AMC ('+pct(AMCN,tot)+') and '+fmt(hah.total)+' to Hospital at Home ('+pct(hah.total,tot)+'). Everyone in buckets 2 and 3 has now been followed to discharge.',4,()=>{cool();});
 }
 function apply(i){steps[i].fn();}
 function jump(i,animateLast){
@@ -316,7 +321,7 @@ function draw(){
   ctx.setTransform(pw/W,0,0,pw/W,0,0);ctx.clearRect(0,0,W,H);readTokens();
   // column headings
   ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.font=font(13,600);
-  cols.forEach((list,s)=>{const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
+  cols.forEach((list,s)=>{list=list.filter(n=>n!==hah);const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
   ctx.globalAlpha=1;
   // links
   ctx.lineCap='butt';
@@ -332,14 +337,14 @@ function draw(){
       ctx.globalAlpha=S.intro*(1-clamp((m-.75)*4,0,1));rr(x,y,w,h,10);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=site.color;ctx.stroke();
       ctx.globalAlpha=S.intro*clamp(1-m*2.2,0,1);ctx.textAlign='center';ctx.fillStyle=C.muted;ctx.font=font(22,600);ctx.fillText(site.label,x+w/2,y+56);
       ctx.fillStyle=C.ink;ctx.font=font(76,700,true);ctx.fillText(fmt(n),x+w/2,y+140);
-      ctx.fillStyle=C.muted;ctx.font=font(16,500);ctx.fillText('patients · '+fmt(site.transfers)+' transferred to AMC',x+w/2,y+184);
+      ctx.fillStyle=C.muted;ctx.font=font(16,500);ctx.fillText('patients · '+fmt(site.direct)+' discharged home',x+w/2,y+184);
     });ctx.globalAlpha=1;
   }
   // pens
   drawPen(fsed);drawPen(home);drawPen(amc);cols.forEach(l=>l.forEach(drawPen));
-  if(home.vis>.01){ctx.globalAlpha=home.vis;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText('TWO BUCKETS FROM THE FSED',home.x+1,34);ctx.globalAlpha=1;}
+  if(home.vis>.01){ctx.globalAlpha=home.vis;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText('THREE BUCKETS FROM THE FSED',home.x+1,34);ctx.globalAlpha=1;}
   if(dis.vis>.01){ctx.globalAlpha=dis.vis;rr(dis.x,dis.y,dis.w,dis.h,8);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=dis.color;ctx.stroke();
-    ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.textAlign='right';ctx.fillText('DISCHARGED AFTER AMC',dis.x+dis.w,34);ctx.textAlign='left';
+    ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.textAlign='right';ctx.fillText('DISCHARGED AFTER CARE',dis.x+dis.w,34);ctx.textAlign='left';
     ctx.fillStyle=C.ink;ctx.font=font(36,700,true);ctx.fillText(fmt(dis.shown),dis.x,80);ctx.globalAlpha=1;}
   if(S.big>.01){ctx.globalAlpha=S.big;ctx.textAlign='center';ctx.fillStyle=C.ink;ctx.font=font(46,700,true);ctx.fillText(fmt(fsed.shown),fsed.x+fsed.w/2,fsed.y+fsed.h/2+8);
     ctx.fillStyle=C.muted;ctx.font=font(14,500);ctx.fillText('patients',fsed.x+fsed.w/2,fsed.y+fsed.h/2+34);ctx.globalAlpha=1;}
