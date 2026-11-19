@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<style>html{color-scheme:light}body{margin:0;font-size:14px}[hidden]{display:none!important}</style>
+<script>window.FSED_STANDALONE=true</script>
+</head>
+<body>
+<title>FSED Patient Journey</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: caption bar on top, one wide stage (canvas) that reads left-to-right like the tracker, transport controls below. */
+:root{
+  --bg:#f3f5f8; --panel:#ffffff; --ink:#152233; --muted:#5a6779; --line:#d5dbe4;
+  --accent:#1f5fd0; --accent-ink:#ffffff; --pen:#ffffff; --link:#6b7a90;
+  --warn:#8a4b00; --warn-bg:#fdecc8;
+  --display:"Space Grotesk","Inter",system-ui,sans-serif; --body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f151d; --panel:#18212d; --ink:#e8edf4; --muted:#9aa7b8; --line:#2c3848;
+  --accent:#5b93f5; --accent-ink:#0b1220; --pen:#1d2835; --link:#8fa0b8;
+  --warn:#f5c46b; --warn-bg:#3a2c10; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f151d; --panel:#18212d; --ink:#e8edf4; --muted:#9aa7b8; --line:#2c3848;
+  --accent:#5b93f5; --accent-ink:#0b1220; --pen:#1d2835; --link:#8fa0b8;
+  --warn:#f5c46b; --warn-bg:#3a2c10; color-scheme:dark }
+body{background:var(--bg);color:var(--ink);font-family:var(--body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px}
+.wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.cap{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;min-height:74px}
+.cap > div{min-width:0;flex:1 1 320px}
+.eyebrow{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+h1{font-family:var(--display);font-size:clamp(20px,2.6vw,32px);line-height:1.15;margin:2px 0 4px;text-wrap:balance}
+#sub{color:var(--muted);font-size:clamp(13px,1.3vw,16px);line-height:1.4;margin:0;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;background:var(--warn-bg);color:var(--warn);font-size:13px;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:6px;white-space:nowrap}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+canvas{display:block;width:100%;min-width:760px;aspect-ratio:1600/860}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select,input{font:inherit;color:var(--ink)}
+button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
+button:hover{border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#play{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);min-width:84px}
+#scrub{flex:1 1 200px;min-width:120px;accent-color:var(--accent)}
+#count{color:var(--muted);font-variant-numeric:tabular-nums;font-size:13px;min-width:56px;text-align:right}
+select{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 8px}
+details{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+summary{cursor:pointer;font-weight:600}
+.set{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
+.set label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);font-weight:600}
+.set input,.set select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 8px;width:150px}
+.note{color:var(--muted);font-size:13px;line-height:1.5;margin:0;max-width:95ch}
+</style>
+
+<div class="wrap">
+  <div class="cap">
+    <div>
+      <div class="eyebrow" id="eyebrow"></div>
+      <h1 id="title">FSED Patient Journey</h1>
+      <p id="sub"></p>
+    </div>
+  </div>
+  <div class="stage"><canvas id="cv" aria-label="Animated patient flow from the free-standing EDs to discharge"></canvas></div>
+  <div class="bar">
+    <button id="restart" title="Restart">Restart</button>
+    <button id="prev" title="Previous step (left arrow)">◀</button>
+    <button id="play" title="Play / pause (space)">Play</button>
+    <button id="next" title="Next step (right arrow)">▶</button>
+    <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Step">
+    <span id="count"></span>
+    <select id="speed" aria-label="Speed"><option value="0.6">0.6×</option><option value="1" selected>1×</option><option value="1.6">1.6×</option><option value="2.5">2.5×</option></select>
+    <button id="rec" hidden title="Plays the whole animation once and saves it as a video file for a slide">Record video</button>
+  </div>
+  <details id="settings">
+    <summary>Volumes and scale</summary>
+    <div class="set">
+      <label for="inPeriod">Period<select id="inPeriod"><option value="year">Last 12 months (actual)</option><option value="month">October 2026</option></select></label>
+      <label for="inPpf">Patients per figure<select id="inPpf"><option>2</option><option>5</option><option>10</option><option>25</option><option>50</option><option>100</option><option>200</option></select></label>
+      <button id="apply">Apply</button>
+    </div>
+  </details>
+  <p class="note" id="note"></p>
+</div>
+
+<script>
+/* ================= DATA =================
+   Node totals come from the journey tracker screenshot (FSED -> hospital only, 1,055 encounters).
+   The split of each node into its next stops is NOT in the screenshot: the numbers below are
+   estimates chosen so every node total reconciles exactly. Replace with real link counts when available. */
+const TYPES={
+  EDB:{label:'AMC ED Boarding',color:'#d9505f'}, HED:{label:'AMC ED',color:'#e08a3c'},
+  OU:{label:'Other Unit',color:'#7d8a9c'}, HAH:{label:'Hospital at Home',color:'#2fa36f'},
+  SP:{label:'Surgical / Procedural',short:'Surgical / Proc.',color:'#17a8a3'}, CDU:{label:'CDU',color:'#a257b3'},
+  FS:{label:'Free-Standing ED',color:'#e56b86'}, FM:{label:'Further moves',color:'#9aa8ba'}
+};
+const DIS_COLOR='#5d6a7c', FSED_COLOR='#3f7fd6', HOME_COLOR='#b8892b', AMC_COLOR='#5b62c9';
+const SITES={bhp:{label:'BHP',base:610,transfers:610,color:'#e9788a'},ken:{label:'Kennedy',base:445,transfers:445,color:'#cdbb45'}};
+const BASE_STAGES=[
+ [['EDB',471,{OU:255,DIS:180,SP:14,HAH:12,CDU:10}],['HED',269,{EDB:156,DIS:70,OU:25,CDU:10,SP:5,HAH:3}],
+  ['OU',168,{DIS:140,SP:14,HAH:8,OU:5,FS:1}],['HAH',31,{DIS:26,OU:3,HAH:2}],
+  ['SP',14,{DIS:6,SP:4,OU:2,HAH:2}],['CDU',102,{DIS:91,HAH:6,CDU:5}]],
+ [['OU',290,{DIS:225,SP:30,HAH:18,OU:16,HED:1}],['EDB',156,{OU:100,DIS:42,SP:8,HAH:6}],
+  ['HAH',33,{DIS:28,OU:3,HAH:2}],['SP',37,{DIS:26,SP:6,OU:5}],['FS',1,{EDB:1}],['CDU',25,{DIS:21,HAH:3,OU:1}]],
+ [['HAH',29,{DIS:24,FM:3,OU:2}],['HED',1,{OU:1}],['OU',125,{DIS:78,FM:31,OU:10,HAH:4,SP:2}],
+  ['SP',44,{OU:20,DIS:15,FM:9}],['EDB',1,{FM:1}]],
+ [['FM',44,{DIS:44}],['OU',33,{DIS:33}],['HAH',4,{DIS:4}],['SP',2,{DIS:2}]]
+];
+let STAGES,TRANSFERS,DIR,PERIOD,HOME;
+/* Month = the tracker's October counts as-is. Year = the same pattern scaled by 365/31 (October run-rate),
+   re-rounded so every stop's inflow and outflow still reconcile. */
+function applyPeriod(){
+  const yr=cfg.period==='year';
+  /* Year: TGH ED Dashboard (Qlik), Brandon + Kennedy, arrivals 2025-11-18 to 2026-11-17, by disposition.
+     Only two Qlik numbers are used per site: arrivals and disposition DISCHARGE (21,557 Brandon, 12,901 Kennedy).
+     Transfer to AMC = arrivals minus discharges; its stops are the October tracker scaled proportionally. Month: October 2026 journey tracker and FSED dashboard. */
+  const P=yr?{arr:[30304,18548],tr:[30304-21557,18548-12901],home:null,eyebrow:'Brandon + Kennedy · Nov 18, 2025 – Nov 17, 2026',when:'in the last 12 months'}
+            :{arr:[2580,1844],tr:[610,445],home:null,eyebrow:'Brandon + Kennedy · Oct 1–31, 2026',when:'in October'};
+  SITES.bhp.transfers=P.tr[0];SITES.ken.transfers=P.tr[1];TRANSFERS=P.tr[0]+P.tr[1];
+  DIR={bhp:P.arr[0]-P.tr[0],ken:P.arr[1]-P.tr[1]};HOME=P.home;PERIOD=P;
+  let totals=alloc(TRANSFERS,BASE_STAGES[0].map(n=>n[1]));
+  STAGES=BASE_STAGES.map((stg,s)=>{const inflow={};
+    const res=stg.map(([t,,out],i)=>{const keys=Object.keys(out),a=alloc(totals[i],keys.map(k=>out[k])),o={};
+      keys.forEach((k,j)=>{o[k]=a[j];if(k!=='DIS')inflow[k]=(inflow[k]||0)+a[j];});return[t,totals[i],o];});
+    if(BASE_STAGES[s+1])totals=BASE_STAGES[s+1].map(n=>inflow[n[0]]||0);
+    return res;});
+}
+const ORD=['First','Second','Third','Fourth'];
+
+/* ================= CONFIG ================= */
+/* FSED arrivals: 142.7/day x 31 days = 4,424 (FSED Update 11.19.26 deck, ED Dashboard, Oct 2026).
+   Site split read off the arrivals chart (about 83/day Brandon, 59/day Kennedy), so it is approximate.
+   Direct discharges = site arrivals minus the tracker's hospital-bound encounters. */
+let cfg={bhpDirect:1970,kenDirect:1399,ppf:50,period:'year',placeholder:false,edited:false};
+try{const s=JSON.parse(localStorage.getItem('fsedJourneyCfg4')||'null'); if(s&&typeof s==='object') cfg=Object.assign(cfg,s);}catch(e){}
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+const pct=(n,d)=>(d?Math.round(n/d*100):0)+'%';
+
+/* ================= ENGINE ================= */
+const W=1600,H=860,cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+let clock=0,speed=1,playing=false,snap=false,idx=-1,stepEnd=0,steps=[];
+let nodes={},cols=[],fsed,dis,home,amc,figs=[],tweens=[],links=[],S={};
+const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+function tween(obj,key,to,dur=.8,delay=0){
+  if(snap){obj[key]=to;return;}
+  tweens.push({obj,key,to,dur,t0:clock+delay,from:null});
+}
+function runTweens(){
+  for(let i=tweens.length-1;i>=0;i--){const t=tweens[i]; if(clock<t.t0)continue;
+    if(t.from===null)t.from=t.obj[t.key];
+    const p=clamp((clock-t.t0)/t.dur,0,1); t.obj[t.key]=t.from+(t.to-t.from)*ease(p);
+    if(p>=1)tweens.splice(i,1);}
+}
+function figState(f){
+  const p=(clock-f.t0)/f.dur;
+  if(p<=0)return{x:f.x0,y:f.y0,s:f.s0,vis:!f.fresh};
+  if(p>=1)return{x:f.x1,y:f.y1,s:f.s1,vis:true};
+  let x,y;
+  if(f.via){const c=.38; if(p<c){const q=p/c;x=f.x0+(f.via[0]-f.x0)*q;y=f.y0+(f.via[1]-f.y0)*q;}
+    else{const q=ease((p-c)/(1-c));x=f.via[0]+(f.x1-f.via[0])*q;y=f.via[1]+(f.y1-f.via[1])*q;}}
+  else{const e=ease(p);x=f.x0+(f.x1-f.x0)*e;y=f.y0+(f.y1-f.y0)*e;}
+  const s=f.s0+(f.s1-f.s0)*p;
+  return{x,y:y-Math.abs(Math.sin(p*Math.PI*7))*s*.18,s,vis:true};
+}
+function moveFig(f,x,y,s,color,delay,dur,via){
+  const c=figState(f); f.x0=c.x;f.y0=c.y;f.s0=c.s; f.x1=x;f.y1=y;f.s1=s; f.color=color; f.via=via||null;
+  if(snap){f.t0=-1e9;f.dur=1;f.fresh=false;} else {f.t0=clock+delay;f.dur=dur;}
+}
+function newFig(x,y,s,color){const f={x0:x,y0:y,x1:x,y1:y,s0:s,s1:s,t0:-1e9,dur:1,color,fresh:true,via:null};figs.push(f);return f;}
+function slot(n,i){const per=n.cols*n.rows; i=i%per; const c=i%n.cols,r=Math.floor(i/n.cols);
+  return[n.x+6+c*n.cw+n.cw/2, n.y+6+r*n.ch+n.ch/2];}
+function alloc(k,ns){const tot=ns.reduce((a,b)=>a+b,0); if(!tot)return ns.map(()=>0);
+  const ex=ns.map(n=>k*n/tot),fl=ex.map(Math.floor); let rem=k-fl.reduce((a,b)=>a+b,0);
+  ex.map((e,i)=>[e-fl[i],i]).sort((a,b)=>b[0]-a[0]).slice(0,rem).forEach(([,i])=>fl[i]++); return fl;}
+
+/* ---------- layout ---------- */
+function layoutCol(list,x,w,top,bottom){
+  const sizes=[14,12,10,8,7,6,5,4,3];
+  for(const cw of sizes){
+    const ch=cw*1.6,nc=Math.max(1,Math.floor((w-12)/cw));
+    let tot=0; const hs=list.map(n=>{const rows=Math.max(1,Math.ceil(n.cap/nc));return{rows,h:rows*ch+12};});
+    hs.forEach(o=>tot+=o.h+26); tot+=12*(list.length-1);
+    if(tot<=bottom-top||cw===3){
+      let y=top+Math.max(0,(bottom-top-tot)/2);
+      list.forEach((n,i)=>{n.x=x;n.w=w;n.y=y+26;n.h=hs[i].h;n.cw=cw;n.ch=ch;n.cols=nc;n.rows=hs[i].rows;y+=hs[i].h+26+12;});
+      return;}
+  }
+}
+function build(){
+  applyPeriod();document.getElementById('eyebrow').textContent=PERIOD.eyebrow;
+  const ppf=cfg.ppf, nT=Math.max(1,Math.round(TRANSFERS/ppf));
+  nodes={};cols=[];
+  fsed=nodes.fsed={id:'fsed',label:'FSED',color:FSED_COLOR,cap:130};
+  const colX=[520,746,972,1198];
+  STAGES.forEach((st,s)=>{
+    const list=st.map(([t,total,out])=>nodes[s+'_'+t]={id:s+'_'+t,type:t,stage:s,label:TYPES[t].label,color:TYPES[t].color,total,out,cap:Math.ceil(total/ppf)+2});
+    layoutCol(list,colX[s],168,70,H-18); cols.push(list);
+  });
+  layoutCol([fsed],24,180,70,H-18);
+  const direct=DIR.bhp+DIR.ken;
+  const nD=Math.round(direct/ppf);
+  home=nodes.home={id:'home',label:'Discharged home',color:HOME_COLOR,cap:nD+3};
+  amc=nodes.amc={id:'amc',label:'Transfer to AMC',color:AMC_COLOR,cap:nT+2};
+  layoutCol([home,amc],250,220,70,H-18);
+  home.pctOf=amc.pctOf=direct+TRANSFERS;
+  dis=nodes.dis={id:'dis',label:'Discharged',color:DIS_COLOR,x:1432,y:96,w:144,h:H-116,cap:nT+6};
+  for(const cw of [14,12,10,9,8,7,6,5,4,3,2]){dis.cw=cw;dis.ch=cw*1.6;dis.cols=Math.floor((dis.w-12)/cw);dis.rows=Math.floor((dis.h-12)/dis.ch);if(dis.cols*dis.rows>=dis.cap)break;}
+  buildSteps(); reset();
+  const sc=document.getElementById('scrub'); sc.max=steps.length-1;
+  document.getElementById('note').textContent='Each figure is about '+ppf+' patients. '+(cfg.period==='year'
+    ?'Arrivals, discharges and transfers are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026; “Transfer to AMC” is every arrival not discharged from the FSED. The stops inside AMC are the October 2026 journey tracker scaled proportionally to that 12-month count, and the split from each stop to the next is estimated.'
+    :'Stop totals match the October 2026 journey tracker ('+fmt(TRANSFERS)+' hospital-bound encounters). FSED arrivals are 142.7 a day × 31 days with the site split read off the chart, and the split from each stop to the next is estimated.');
+}
+function reset(){
+  figs=[];tweens=[];links=[];
+  for(const k in nodes){const n=nodes[k];n.figs=[];n.arr=0;n.shown=0;n.vis=0;n.slotN=0;n.al=null;}
+  S={intro:0,merge:0,big:0,heroX:-80,heroA:0,bhpN:0,kenN:0};
+}
+
+/* ---------- step operations ---------- */
+function cool(){links.forEach(l=>l.hot=false);}
+function send(from,to,n,k,delay0=0,dur=1.3){
+  const fs=from.figs.splice(0,k), gap=Math.min(.03,.9/Math.max(1,k));
+  fs.forEach((f,i)=>{const[x,y]=slot(to,to.slotN++);moveFig(f,x,y,to.cw,to.color,delay0+i*gap,dur);to.figs.push(f);});
+  to.arr+=n; tween(to,'shown',to.arr,1.2,delay0); tween(to,'vis',1,.4);
+  const l={from,to,n,a:0,hot:true}; links.push(l); tween(l,'a',1,.5,delay0);
+}
+function stream(to,k,n,spread){
+  tween(to,'vis',1,.5);
+  for(let i=0;i<k;i++){const f=newFig(-30-Math.random()*260,fsed.y+fsed.h*(.1+.8*Math.random()),fsed.cw,to.color);
+    const[x,y]=slot(to,to.slotN++);
+    moveFig(f,x,y,to.cw,to.color,i*(spread/Math.max(1,k)),1.5,[fsed.x+fsed.w*(.15+.7*Math.random()),fsed.y+fsed.h*(.1+.8*Math.random())]);to.figs.push(f);}
+  to.arr+=n;tween(to,'shown',to.arr,spread+.8,.6);
+  const l={from:fsed,to,n,a:0,hot:true};links.push(l);tween(l,'a',1,.5,.4);
+}
+function split(node){
+  const outs=Object.entries(node.out).map(([t,n])=>[t==='DIS'?dis:nodes[(node.stage+1)+'_'+t],n]);
+  const al=alloc(node.figs.length,outs.map(o=>o[1]));
+  outs.forEach(([to,n],j)=>send(node,to,n,al[j],j*.28));
+}
+function outText(node){
+  return Object.entries(node.out).sort((a,b)=>b[1]-a[1]).map(([t,n])=>fmt(n)+' '+(t==='DIS'?'discharged':'to '+TYPES[t].label)).join(' · ');
+}
+function buildSteps(){
+  steps=[];
+  const add=(title,sub,dur,fn,ph)=>steps.push({title,sub,dur,fn,ph});
+  const bT=SITES.bhp.transfers+DIR.bhp,kT=SITES.ken.transfers+DIR.ken,tot=bT+kT,direct=DIR.bhp+DIR.ken;
+  const ppf=cfg.ppf,nT=Math.max(1,Math.round(TRANSFERS/ppf)),nD=Math.round(direct/ppf);
+  add('Two free-standing EDs','BHP saw '+fmt(bT)+' patients and Kennedy saw '+fmt(kT)+' '+PERIOD.when+'.',3.2,()=>{
+    tween(S,'intro',1,.7);tween(S,'bhpN',bT,1.6,.3);tween(S,'kenN',kT,1.6,.3);},true);
+  add('Together they are the FSED',fmt(tot)+' patients through one front door.',3.2,()=>{
+    S.intro=1;S.bhpN=bT;S.kenN=kT; tween(S,'merge',1,1.5);tween(fsed,'vis',1,.6,.9);tween(S,'big',1,.6,1);fsed.arr=tot;tween(fsed,'shown',tot,1.2,.9);},true);
+  add('A patient walks in','Follow them from the FSED door to their eventual discharge.',2.8,()=>{
+    S.heroA=1;tween(S,'heroX',fsed.x+fsed.w/2,2);tween(S,'big',0,.5);});
+  add('Bucket 1 · Discharged home',fmt(direct)+' of '+fmt(tot)+' ('+pct(direct,tot)+') never go to AMC'+(HOME?': '+fmt(HOME.d)+' discharged, '+fmt(HOME.l)+' left before or during care, '+fmt(HOME.o)+' other.':'.'),5.5,()=>{
+    cool();tween(S,'heroA',0,.4);stream(home,nD,direct,2.8);});
+  add('Bucket 2 · Transfer to AMC',fmt(TRANSFERS)+' of '+fmt(tot)+' ('+pct(TRANSFERS,tot)+') leave the FSED for the main campus: '+fmt(SITES.bhp.transfers)+' from BHP, '+fmt(SITES.ken.transfers)+' from Kennedy.',4.5,()=>{
+    cool();stream(amc,nT,TRANSFERS,1.8);});
+  cols[0].forEach((n,i)=>{
+    add('Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(TRANSFERS)+' transfers ('+pct(n.total,TRANSFERS)+') go here first.',n.total<TRANSFERS*.04?2.2:3,()=>{
+      cool(); if(!amc.al)amc.al=alloc(amc.figs.length,cols[0].map(c=>c.total));
+      send(amc,n,n.total,amc.al[i]);});
+    add('From '+n.label+', where next?','Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
+  });
+  for(let s=1;s<3;s++)cols[s].forEach(n=>{
+    add(ORD[s]+' stop · '+n.label,'Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.01?1.8:n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
+  });
+  const last=cols[3].reduce((a,n)=>a+n.total,0);
+  add('Fourth stop and beyond','The last '+fmt(last)+' patients finish their hospital course and are discharged.',4,()=>{cool();cols[3].forEach(n=>split(n));});
+  const byStage=STAGES.map(st=>st.reduce((a,[, ,o])=>a+(o.DIS||0),0));
+  add('Every patient followed to discharge',fmt(tot)+' arrivals. '+fmt(direct)+' never went to AMC. '+fmt(TRANSFERS)+' transferred to AMC and were discharged after one stop ('+fmt(byStage[0])+'), two ('+fmt(byStage[1])+'), three ('+fmt(byStage[2])+') or four and more ('+fmt(byStage[3])+').',4,()=>{cool();});
+}
+function apply(i){steps[i].fn();}
+function jump(i,animateLast){
+  i=clamp(i,0,steps.length-1);
+  if(!(animateLast&&i===idx+1)){reset();snap=true;for(let k=0;k<(animateLast?i:i+1);k++)apply(k);snap=false;}
+  if(animateLast)apply(i);
+  idx=i;stepEnd=clock+(animateLast?steps[i].dur:1.2);ui();
+}
+function ui(){
+  const st=steps[idx];
+  document.getElementById('title').textContent=st.title;
+  const sub=document.getElementById('sub');sub.textContent=st.sub;
+  if(st.ph&&cfg.placeholder){const b=document.createElement('span');b.className='badge';b.textContent='placeholder FSED discharge volume';sub.appendChild(b);}
+  document.getElementById('scrub').value=idx;
+  document.getElementById('count').textContent=(idx+1)+' / '+steps.length;
+  document.getElementById('play').textContent=playing?'Pause':(idx>=steps.length-1?'Replay':'Play');
+}
+
+/* ---------- drawing ---------- */
+let C={};
+function readTokens(){const cs=getComputedStyle(document.documentElement);['ink','muted','line','pen','link','panel','accent'].forEach(k=>C[k]=cs.getPropertyValue('--'+k).trim());}
+function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function person(x,y,s){ctx.moveTo(x+s*.24,y-s*.45);ctx.arc(x,y-s*.45,s*.24,0,6.283);
+  const bx=x-s*.3,by=y-s*.17,bw=s*.6,bh=s*.82,r=s*.27;
+  ctx.moveTo(bx+r,by);ctx.arcTo(bx+bw,by,bx+bw,by+bh,r);ctx.lineTo(bx+bw,by+bh);ctx.lineTo(bx,by+bh);ctx.arcTo(bx,by,bx+r,by,r);ctx.closePath();}
+function anchor(l){
+  const a=l.from,b=l.to,x0=a.x+a.w,y0=a.y+a.h/2,x1=b.x,y1=b===dis?clamp(y0,dis.y+24,dis.y+dis.h-24):b.y+b.h/2;
+  return{x0,y0,x1,y1};
+}
+function font(px,w,disp){return (w||500)+' '+px+'px '+(disp?'"Space Grotesk",':'')+'Inter,system-ui,sans-serif';}
+function drawPen(n){
+  if(n.vis<=.01)return; ctx.globalAlpha=n.vis;
+  rr(n.x,n.y,n.w,n.h,7);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=n.color;ctx.stroke();
+  ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle=C.ink;ctx.font=font(14,600);ctx.fillText((TYPES[n.type]&&TYPES[n.type].short)||n.label,n.x+1,n.y-8);
+  ctx.textAlign='right';ctx.font=font(n.pctOf?15:14,700);ctx.fillStyle=n.color;ctx.fillText(fmt(n.shown)+(n.pctOf&&n.arr?' · '+pct(n.arr,n.pctOf):''),n.x+n.w-1,n.y-8);
+  ctx.globalAlpha=1;
+}
+function draw(){
+  const cw=cv.clientWidth,dpr=window.devicePixelRatio||1,pw=Math.round(cw*dpr),ph=Math.round(cw*H/W*dpr);
+  if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph;}
+  ctx.setTransform(pw/W,0,0,pw/W,0,0);ctx.clearRect(0,0,W,H);readTokens();
+  // column headings
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.font=font(13,600);
+  cols.forEach((list,s)=>{const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
+  ctx.globalAlpha=1;
+  // links
+  ctx.lineCap='butt';
+  links.forEach(l=>{const p=anchor(l),dx=(p.x1-p.x0)*.5;ctx.beginPath();ctx.moveTo(p.x0,p.y0);ctx.bezierCurveTo(p.x0+dx,p.y0,p.x1-dx,p.y1,p.x1,p.y1);
+    ctx.lineWidth=Math.min(64,Math.max(1.5,l.n*79/TRANSFERS));ctx.strokeStyle=l.hot?l.to.color:C.link;ctx.globalAlpha=l.a*(l.hot?.42:.13);ctx.stroke();});
+  ctx.globalAlpha=1;
+  // intro site cards morphing into the FSED pen
+  const m=S.merge;
+  if(S.intro>.01&&m<.999){
+    const cards=[[SITES.bhp,S.bhpN,150],[SITES.ken,S.kenN,470]];
+    cards.forEach(([site,n,y0])=>{
+      const x=560+(fsed.x-560)*ease(m),y=y0+(fsed.y-y0)*ease(m),w=440+(fsed.w-440)*ease(m),h=230+(fsed.h-230)*ease(m);
+      ctx.globalAlpha=S.intro*(1-clamp((m-.75)*4,0,1));rr(x,y,w,h,10);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=site.color;ctx.stroke();
+      ctx.globalAlpha=S.intro*clamp(1-m*2.2,0,1);ctx.textAlign='center';ctx.fillStyle=C.muted;ctx.font=font(22,600);ctx.fillText(site.label,x+w/2,y+56);
+      ctx.fillStyle=C.ink;ctx.font=font(76,700,true);ctx.fillText(fmt(n),x+w/2,y+140);
+      ctx.fillStyle=C.muted;ctx.font=font(16,500);ctx.fillText('patients · '+fmt(site.transfers)+' transferred to AMC',x+w/2,y+184);
+    });ctx.globalAlpha=1;
+  }
+  // pens
+  drawPen(fsed);drawPen(home);drawPen(amc);cols.forEach(l=>l.forEach(drawPen));
+  if(home.vis>.01){ctx.globalAlpha=home.vis;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText('TWO BUCKETS FROM THE FSED',home.x+1,34);ctx.globalAlpha=1;}
+  if(dis.vis>.01){ctx.globalAlpha=dis.vis;rr(dis.x,dis.y,dis.w,dis.h,8);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=dis.color;ctx.stroke();
+    ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.textAlign='right';ctx.fillText('DISCHARGED AFTER AMC',dis.x+dis.w,34);ctx.textAlign='left';
+    ctx.fillStyle=C.ink;ctx.font=font(36,700,true);ctx.fillText(fmt(dis.shown),dis.x,80);ctx.globalAlpha=1;}
+  if(S.big>.01){ctx.globalAlpha=S.big;ctx.textAlign='center';ctx.fillStyle=C.ink;ctx.font=font(46,700,true);ctx.fillText(fmt(fsed.shown),fsed.x+fsed.w/2,fsed.y+fsed.h/2+8);
+    ctx.fillStyle=C.muted;ctx.font=font(14,500);ctx.fillText('patients',fsed.x+fsed.w/2,fsed.y+fsed.h/2+34);ctx.globalAlpha=1;}
+  // figures, batched by colour
+  const groups=new Map();
+  for(const f of figs){const st=figState(f);if(!st.vis)continue;let g=groups.get(f.color);if(!g)groups.set(f.color,g=[]);g.push(st);}
+  groups.forEach((g,color)=>{ctx.beginPath();for(const st of g)person(st.x,st.y,st.s);ctx.fillStyle=color;ctx.fill();});
+  if(S.heroA>.01){ctx.globalAlpha=S.heroA;ctx.beginPath();const moving=Math.abs(S.heroX-(fsed.x+fsed.w/2))>1;
+    person(S.heroX,fsed.y+fsed.h/2-(moving?Math.abs(Math.sin(clock*9))*6:0),54);ctx.fillStyle=C.accent;ctx.fill();ctx.globalAlpha=1;}
+  // number chips on the active flows
+  ctx.font=font(14,700);ctx.textAlign='center';ctx.textBaseline='middle';
+  links.forEach(l=>{if(!l.hot||l.a<.05)return;const p=anchor(l),dx=(p.x1-p.x0)*.5,t=l.to===dis?1-34/Math.max(60,p.x1-p.x0):.7,u=1-t;
+    const bx=u*u*u*p.x0+3*u*u*t*(p.x0+dx)+3*u*t*t*(p.x1-dx)+t*t*t*p.x1,by=u*u*u*p.y0+3*u*u*t*p.y0+3*u*t*t*p.y1+t*t*t*p.y1;
+    const txt=fmt(l.n),tw=ctx.measureText(txt).width+12;ctx.globalAlpha=l.a;rr(bx-tw/2,by-10,tw,20,10);ctx.fillStyle=l.to.color;ctx.fill();
+    ctx.fillStyle='#ffffff';ctx.fillText(txt,bx,by+.5);});
+  ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
+}
+
+/* ---------- loop + controls ---------- */
+let lastT=performance.now();
+function frame(now){
+  const dt=Math.min(.05,(now-lastT)/1000);lastT=now;clock+=dt*speed;runTweens();
+  if(playing&&clock>=stepEnd){if(idx<steps.length-1)jump(idx+1,true);else{playing=false;ui();}}
+  draw();
+  if(REC){recFrame();
+    if(!playing&&idx>=steps.length-1&&!REC.stopping){if(REC.endAt===null)REC.endAt=clock+2.5;else if(clock>=REC.endAt){REC.stopping=true;REC.mr.stop();}}}
+  requestAnimationFrame(frame);
+}
+const $=id=>document.getElementById(id);
+function togglePlay(){
+  if(!playing&&idx>=steps.length-1){playing=true;reset();idx=-1;jump(0,true);return;}
+  playing=!playing; if(playing)stepEnd=Math.min(stepEnd,clock+.4); ui();
+}
+$('play').onclick=togglePlay;
+$('restart').onclick=()=>{playing=true;reset();idx=-1;jump(0,true);};
+$('next').onclick=()=>{if(idx<steps.length-1)jump(idx+1,true);};
+$('prev').onclick=()=>{jump(idx-1,false);};
+$('scrub').oninput=e=>{playing=false;jump(+e.target.value,false);};
+$('speed').onchange=e=>{speed=+e.target.value;};
+document.addEventListener('keydown',e=>{
+  if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)&&e.target.id!=='scrub')return;
+  if(e.key===' '){e.preventDefault();togglePlay();}
+  else if(e.key==='ArrowRight'){e.preventDefault();$('next').onclick();}
+  else if(e.key==='ArrowLeft'){e.preventDefault();$('prev').onclick();}
+});
+$('inPpf').value=cfg.ppf;$('inPeriod').value=cfg.period;
+$('inPeriod').onchange=e=>{$('inPpf').value=e.target.value==='year'?50:5;};
+$('apply').onclick=()=>{
+  cfg.period=$('inPeriod').value;cfg.ppf=+$('inPpf').value||5;
+  try{localStorage.setItem('fsedJourneyCfg4',JSON.stringify(cfg));}catch(e){}
+  build();idx=-1;playing=true;jump(0,true);
+};
+
+/* ---------- video export (standalone page only): 1920x1080 with the caption drawn into the frame ---------- */
+let REC=null;
+function recFrame(){
+  const g=REC.g,SW=1640,SH=Math.round(1640*H/W),SX=140,SY=186,st=steps[Math.max(0,idx)];
+  g.fillStyle=C.panel;g.fillRect(0,0,1920,1080);g.textAlign='left';g.textBaseline='alphabetic';
+  g.fillStyle=C.muted;g.font='600 18px Inter,system-ui,sans-serif';g.fillText(PERIOD.eyebrow.toUpperCase(),SX,52);
+  g.fillStyle=C.ink;g.font='700 46px "Space Grotesk",Inter,system-ui,sans-serif';g.fillText(st.title,SX,104);
+  g.fillStyle=C.muted;g.font='500 22px Inter,system-ui,sans-serif';
+  const lines=[];let cur='';for(const w of st.sub.split(' ')){const n=cur?cur+' '+w:w;if(g.measureText(n).width>SW&&cur){lines.push(cur);cur=w;}else cur=n;}if(cur)lines.push(cur);
+  lines.slice(0,2).forEach((ln,k)=>g.fillText(ln,SX,140+k*30));
+  g.drawImage(cv,SX,SY,SW,SH);g.strokeStyle=C.line;g.lineWidth=1;g.strokeRect(SX+.5,SY+.5,SW-1,SH-1);
+}
+function startRec(){
+  const comp=document.createElement('canvas');comp.width=1920;comp.height=1080;
+  const type=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
+  const mr=new MediaRecorder(comp.captureStream(30),{mimeType:type,videoBitsPerSecond:6e6}),chunks=[];
+  mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  mr.onstop=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(chunks,{type}));
+    a.download='fsed-patient-journey.'+(type.indexOf('mp4')>=0?'mp4':'webm');document.body.appendChild(a);a.click();a.remove();
+    REC=null;$('rec').textContent='Record video';};
+  REC={g:comp.getContext('2d'),mr,endAt:null,stopping:false};
+  speed=1;$('speed').value='1';playing=true;reset();idx=-1;jump(0,true);readTokens();recFrame();mr.start();
+  $('rec').textContent='Recording… click to stop';
+}
+if(window.FSED_STANDALONE&&window.MediaRecorder){$('rec').hidden=false;
+  $('rec').onclick=()=>{if(REC){if(!REC.stopping){REC.stopping=true;REC.mr.stop();}}else startRec();};}
+
+// self-check: every stop's outflows equal its total, and inflows equal the next stops' totals
+(function(){let prev={};cols=[];BASE_STAGES.forEach((st,s)=>{const inflow={};
+  st.forEach(([t,total,out])=>{const o=Object.values(out).reduce((a,b)=>a+b,0);if(o!==total)console.error('outflow mismatch',s,t,o,total);
+    if(s>0&&prev[t]!==total)console.error('inflow mismatch',s,t,prev[t],total);
+    Object.entries(out).forEach(([k,n])=>{if(k!=='DIS')inflow[k]=(inflow[k]||0)+n;});});prev=inflow;});})();
+
+build();
+const reduced=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+if(reduced){jump(steps.length-1,false);}else{playing=true;jump(0,true);}
+requestAnimationFrame(frame);
+</script>
+
+</body>
+</html>
