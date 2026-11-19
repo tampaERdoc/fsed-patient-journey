@@ -225,6 +225,7 @@ function layoutMobile(){
 function follow(){
   const hot=links.filter(l=>l.hot);let ns=[];
   if(idx>=steps.length-1)ns=[dis];
+  else if(S.focus)ns=S.focus.view;
   else if(hot.length){const onlyDis=hot.every(l=>l.to===dis);hot.forEach(l=>{ns.push(l.from);if(l.to!==dis||onlyDis)ns.push(l.to);});}
   const y0=ns.length?Math.min(...ns.map(n=>n.y-64)):0,y1=ns.length?Math.max(...ns.map(n=>n.y+n.h+8)):300;
   const r=cv.getBoundingClientRect(),sc=r.width/W,capH=document.querySelector('.cap').offsetHeight,barH=document.querySelector('.bar').offsetHeight;
@@ -260,11 +261,21 @@ function build(){
 function reset(){
   figs=[];tweens=[];links=[];
   for(const k in nodes){const n=nodes[k];n.figs=[];n.arr=0;n.shown=0;n.vis=0;n.slotN=0;n.al=null;}
-  S={intro:0,merge:0,big:0,heroX:-80,heroA:0,bhpN:0,kenN:0};
+  S={intro:0,merge:0,big:0,heroX:-80,heroA:0,bhpN:0,kenN:0,dim:0,focus:null};
 }
 
 /* ---------- step operations ---------- */
-function cool(){links.forEach(l=>l.hot=false);}
+function cool(){links.forEach(l=>l.hot=false);S.focus=null;S.dim=0;}
+/* Spotlight: dim everything except one whole pathway, FSED -> Transfer to AMC -> first stop -> its next stops. */
+function spotlight(n){
+  cool();
+  const outs=Object.entries(n.out).filter(e=>e[1]>0).map(([t])=>t==='DIS'?dis:nodes[(n.stage+1)+'_'+t]);
+  const ns=new Set([fsed,amc,n,...outs]),ls=new Set(),fg=new Set();
+  links.forEach(l=>{if((l.from===fsed&&l.to===amc)||(l.from===amc&&l.to===n)||l.from===n){l.hot=true;ls.add(l);}});
+  ns.forEach(x=>x.figs.forEach(f=>fg.add(f)));
+  S.focus={nodes:ns,links:ls,figs:fg,view:[n,...outs.filter(o=>o!==dis)]};tween(S,'dim',1,.8);
+}
+const fa=n=>S.focus&&!S.focus.nodes.has(n)?1-.86*S.dim:1;
 function send(from,to,n,k,delay0=0,dur=1.3){
   const fs=from.figs.splice(0,k), gap=Math.min(.03,.9/Math.max(1,k));
   fs.forEach((f,i)=>{const[x,y]=slot(to,to.slotN++);moveFig(f,x,y,to.cw,to.color,delay0+i*gap,dur);to.figs.push(f);});
@@ -310,6 +321,7 @@ function buildSteps(){
     add('Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(AMCN)+' transfers ('+pct(n.total,AMCN)+') go here first.',n.total<TRANSFERS*.04?2.2:3,()=>{
       cool();send(amc,n,n.total,al0[i]);});
     add('From '+n.label+', where next?','Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
+    if(n.type==='EDB'||n.type==='HED')add('Pathway · FSED → Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(tot)+' FSED arrivals ('+pct(n.total,tot)+') take this path. Next: '+outText(n)+'.',6,()=>{spotlight(n);});
   });
   if(hah.total)add('From Hospital at Home (bucket 3), where next?','Of '+fmt(hah.total)+': '+outText(hah)+'.',3,()=>{cool();split(hah);});
   for(let s=1;s<3;s++)cols[s].forEach(n=>{if(!n.total)return;
@@ -354,8 +366,8 @@ function anchor(l){
 function ctl(p){const dx=(p.x1-p.x0)*.5,dy=(p.y1-p.y0)*.5;return M?[p.x0,p.y0+dy,p.x1,p.y1-dy]:[p.x0+dx,p.y0,p.x1-dx,p.y1];}
 function font(px,w,disp){return (w||500)+' '+px+'px '+(disp?'"Space Grotesk",':'')+'Inter,system-ui,sans-serif';}
 function drawPen(n){
-  if(n.vis<=.01)return; ctx.globalAlpha=n.vis;
-  rr(n.x,n.y,n.w,n.h,7);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=n.color;ctx.stroke();
+  if(n.vis<=.01)return; ctx.globalAlpha=n.vis*fa(n);
+  rr(n.x,n.y,n.w,n.h,7);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=S.focus&&S.focus.nodes.has(n)?2+1.5*S.dim:2;ctx.strokeStyle=n.color;ctx.stroke();
   if(M){ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle=C.ink;ctx.font=font(13,600);ctx.fillText((TYPES[n.type]&&TYPES[n.type].short)||n.label,n.x+1,n.y-22);
     ctx.font=font(14,700);ctx.fillStyle=n.color;ctx.fillText(fmt(n.shown)+(n.pctOf&&n.arr?' · '+pct(n.arr,n.pctOf):''),n.x+1,n.y-6);ctx.globalAlpha=1;return;}
   ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle=C.ink;ctx.font=font(14,600);ctx.fillText((TYPES[n.type]&&TYPES[n.type].short)||n.label,n.x+1,n.y-8);
@@ -373,7 +385,7 @@ function draw(){
   // links
   ctx.lineCap='butt';
   links.forEach(l=>{const p=anchor(l),c=ctl(p);ctx.beginPath();ctx.moveTo(p.x0,p.y0);ctx.bezierCurveTo(c[0],c[1],c[2],c[3],p.x1,p.y1);
-    ctx.lineWidth=M?Math.min(22,Math.max(1,l.n*28/TRANSFERS)):Math.min(64,Math.max(1.5,l.n*79/TRANSFERS));ctx.strokeStyle=l.hot?l.to.color:C.link;ctx.globalAlpha=l.a*(l.hot?.42:.13);ctx.stroke();});
+    ctx.lineWidth=M?Math.min(22,Math.max(1,l.n*28/TRANSFERS)):Math.min(64,Math.max(1.5,l.n*79/TRANSFERS));ctx.strokeStyle=l.hot?l.to.color:C.link;ctx.globalAlpha=l.a*(l.hot?.42:.13)*(S.focus?(S.focus.links.has(l)?1+.6*S.dim:1-.9*S.dim):1);ctx.stroke();});
   ctx.globalAlpha=1;
   // intro site cards morphing into the FSED pen
   const m=S.merge;
@@ -391,15 +403,15 @@ function draw(){
   drawPen(fsed);drawPen(home);drawPen(amc);cols.forEach(l=>l.forEach(drawPen));
   HEADS.forEach(h=>{const v=Math.max(...h.nodes.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText(h.t,11,h.y);ctx.globalAlpha=1;}});
   if(!M&&home.vis>.01){ctx.globalAlpha=home.vis;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText('THREE BUCKETS FROM THE FSED',home.x+1,34);ctx.globalAlpha=1;}
-  if(M)drawPen(dis);else if(dis.vis>.01){ctx.globalAlpha=dis.vis;rr(dis.x,dis.y,dis.w,dis.h,8);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=dis.color;ctx.stroke();
+  if(M)drawPen(dis);else if(dis.vis>.01){ctx.globalAlpha=dis.vis*fa(dis);rr(dis.x,dis.y,dis.w,dis.h,8);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=dis.color;ctx.stroke();
     ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.textAlign='right';ctx.fillText('DISCHARGED AFTER CARE',dis.x+dis.w,34);ctx.textAlign='left';
     ctx.fillStyle=C.ink;ctx.font=font(36,700,true);ctx.fillText(fmt(dis.shown),dis.x,80);ctx.globalAlpha=1;}
   if(S.big>.01){ctx.globalAlpha=S.big;ctx.textAlign='center';ctx.fillStyle=C.ink;ctx.font=font(M?36:46,700,true);ctx.fillText(fmt(fsed.shown),fsed.x+fsed.w/2,fsed.y+fsed.h/2+8);
     ctx.fillStyle=C.muted;ctx.font=font(14,500);ctx.fillText('patients',fsed.x+fsed.w/2,fsed.y+fsed.h/2+34);ctx.globalAlpha=1;}
   // figures, batched by colour
   const groups=new Map();
-  for(const f of figs){const st=figState(f);if(!st.vis)continue;let g=groups.get(f.color);if(!g)groups.set(f.color,g=[]);g.push(st);}
-  groups.forEach((g,color)=>{ctx.beginPath();for(const st of g)person(st.x,st.y,st.s);ctx.fillStyle=color;ctx.fill();});
+  for(const f of figs){const st=figState(f);if(!st.vis)continue;const k=f.color+(S.focus&&!S.focus.figs.has(f)?'|d':'');let g=groups.get(k);if(!g)groups.set(k,g=[]);g.push(st);}
+  groups.forEach((g,k)=>{ctx.beginPath();for(const st of g)person(st.x,st.y,st.s);ctx.globalAlpha=k.length>7?1-.88*S.dim:1;ctx.fillStyle=k.slice(0,7);ctx.fill();});ctx.globalAlpha=1;
   if(S.heroA>.01){ctx.globalAlpha=S.heroA;ctx.beginPath();const moving=Math.abs(S.heroX-(fsed.x+fsed.w/2))>1;
     person(S.heroX,fsed.y+fsed.h/2-(moving?Math.abs(Math.sin(clock*9))*6:0),54);ctx.fillStyle=C.accent;ctx.fill();ctx.globalAlpha=1;}
   // number chips on the active flows
