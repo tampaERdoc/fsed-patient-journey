@@ -267,13 +267,15 @@ function reset(){
 /* ---------- step operations ---------- */
 function cool(){links.forEach(l=>l.hot=false);S.focus=null;S.dim=0;}
 /* Spotlight: dim everything except one whole pathway, FSED -> Transfer to AMC -> first stop -> its next stops. */
-function spotlight(n){
+function spotlight(list){
   cool();
-  const outs=Object.entries(n.out).filter(e=>e[1]>0).map(([t])=>t==='DIS'?dis:nodes[(n.stage+1)+'_'+t]);
-  const ns=new Set([fsed,amc,n,...outs]),ls=new Set(),fg=new Set();
-  links.forEach(l=>{if((l.from===fsed&&l.to===amc)||(l.from===amc&&l.to===n)||l.from===n){l.hot=true;ls.add(l);}});
+  const ns=new Set([fsed,amc]),ls=new Set(),fg=new Set(),view=list.length>1?[amc]:[];
+  list.forEach(n=>{ns.add(n);view.push(n);
+    Object.entries(n.out).filter(e=>e[1]>0).forEach(([t])=>{const o=t==='DIS'?dis:nodes[(n.stage+1)+'_'+t];ns.add(o);if(o!==dis&&list.length===1)view.push(o);});});
+  links.forEach(l=>{if((l.from===fsed&&l.to===amc)||(l.from===amc&&list.includes(l.to))||list.includes(l.from)){l.hot=true;ls.add(l);}});
   ns.forEach(x=>x.figs.forEach(f=>fg.add(f)));
-  S.focus={nodes:ns,links:ls,figs:fg,view:[n,...outs.filter(o=>o!==dis)]};tween(S,'dim',1,.8);
+  const quiet=new Set();if(list.length>1)ls.forEach(l=>{if(list.includes(l.from)&&l.to!==dis)quiet.add(l);});
+  S.focus={nodes:ns,links:ls,figs:fg,view,quiet};tween(S,'dim',1,.8);
 }
 const fa=n=>S.focus&&!S.focus.nodes.has(n)?1-.86*S.dim:1;
 function send(from,to,n,k,delay0=0,dur=1.3){
@@ -321,8 +323,10 @@ function buildSteps(){
     add('Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(AMCN)+' transfers ('+pct(n.total,AMCN)+') go here first.',n.total<TRANSFERS*.04?2.2:3,()=>{
       cool();send(amc,n,n.total,al0[i]);});
     add('From '+n.label+', where next?','Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
-    if(n.type==='EDB'||n.type==='HED')add('Pathway · FSED → Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(tot)+' FSED arrivals ('+pct(n.total,tot)+') take this path. Next: '+outText(n)+'.',6,()=>{spotlight(n);});
+    if(n.type==='EDB'||n.type==='HED')add('Pathway · FSED → Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(tot)+' FSED arrivals ('+pct(n.total,tot)+') take this path. Next: '+outText(n)+'.',6,()=>{spotlight([n]);});
   });
+  {const firsts=cols[0].filter(n=>n!==hah&&n.total>0);
+   add('Pathway · Transfer to AMC, every route',fmt(AMCN)+' of '+fmt(tot)+' FSED arrivals ('+pct(AMCN,tot)+') transfer to AMC. First stops: '+firsts.map(n=>fmt(n.total)+' '+n.label).join(' · ')+'.',7,()=>{spotlight(firsts);});}
   if(hah.total)add('From Hospital at Home (bucket 3), where next?','Of '+fmt(hah.total)+': '+outText(hah)+'.',3,()=>{cool();split(hah);});
   for(let s=1;s<3;s++)cols[s].forEach(n=>{if(!n.total)return;
     add(ORD[s]+' stop · '+n.label,'Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.01?1.8:n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
@@ -416,7 +420,7 @@ function draw(){
     person(S.heroX,fsed.y+fsed.h/2-(moving?Math.abs(Math.sin(clock*9))*6:0),54);ctx.fillStyle=C.accent;ctx.fill();ctx.globalAlpha=1;}
   // number chips on the active flows
   ctx.font=font(14,700);ctx.textAlign='center';ctx.textBaseline='middle';
-  links.forEach(l=>{if(!l.hot||l.a<.05)return;const p=anchor(l),c=ctl(p),t=M?(l.to===dis?.18:.8):(l.to===dis?1-34/Math.max(60,p.x1-p.x0):.7),u=1-t;
+  links.forEach(l=>{if(!l.hot||l.a<.05||(S.focus&&S.focus.quiet.has(l)))return;const p=anchor(l),c=ctl(p),t=M?(l.to===dis?.18:.8):(l.to===dis?1-34/Math.max(60,p.x1-p.x0):.7),u=1-t;
     const bx=u*u*u*p.x0+3*u*u*t*c[0]+3*u*t*t*c[2]+t*t*t*p.x1,by=u*u*u*p.y0+3*u*u*t*c[1]+3*u*t*t*c[3]+t*t*t*p.y1;
     const txt=fmt(l.n),tw=ctx.measureText(txt).width+12;ctx.globalAlpha=l.a;rr(bx-tw/2,by-10,tw,20,10);ctx.fillStyle=l.to.color;ctx.fill();
     ctx.fillStyle='#ffffff';ctx.fillText(txt,bx,by+.5);});
