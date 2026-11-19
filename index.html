@@ -39,6 +39,11 @@ h1{font-family:var(--display);font-size:clamp(20px,2.6vw,32px);line-height:1.15;
 .stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
 canvas{display:block;width:100%;min-width:760px;aspect-ratio:1600/860}
 .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#tally{margin:4px 0 0;font-size:13px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+body.m .cap{position:sticky;top:0;z-index:5;background:var(--bg);padding-block:8px;min-height:0}
+body.m .bar{position:sticky;bottom:0;z-index:5;background:var(--bg);padding-block:8px}
+body.m canvas{min-width:0}
+body.m h1{font-size:20px}
 button,select,input{font:inherit;color:var(--ink)}
 button{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}
 button:hover{border-color:var(--accent)}
@@ -61,6 +66,7 @@ summary{cursor:pointer;font-weight:600}
       <div class="eyebrow" id="eyebrow"></div>
       <h1 id="title">FSED Patient Journey</h1>
       <p id="sub"></p>
+      <p id="tally" hidden></p>
     </div>
   </div>
   <div class="stage"><canvas id="cv" aria-label="Animated patient flow from the free-standing EDs to discharge"></canvas></div>
@@ -139,7 +145,9 @@ const fmt=n=>Math.round(n).toLocaleString('en-US');
 const pct=(n,d)=>{const v=d?n/d*100:0;return (v>0&&v<10?v.toFixed(1):Math.round(v))+'%';};
 
 /* ================= ENGINE ================= */
-const W=1600,H=860,cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const M=!!window.FSED_MOBILE;if(M)document.body.classList.add('m');
+let W=M?420:1600,H=M?1500:860,HEADS=[];
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let clock=0,speed=1,playing=false,snap=false,idx=-1,stepEnd=0,steps=[];
 let nodes={},cols=[],fsed,dis,home,amc,hah,figs=[],tweens=[],links=[],S={};
 const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
@@ -190,6 +198,30 @@ function layoutCol(list,x,w,top,bottom){
       return;}
   }
 }
+/* Phone layout: the flow runs top to bottom. FSED, then the three buckets, then each stop as rows of three boxes. */
+function layoutMobile(){
+  const X0=10,GW=W-20,LBL=40;let y=6;HEADS=[];
+  const fit=(n,w,maxH)=>{for(const cw of [8,7,6,5,4,3]){const ch=cw*1.6,nc=Math.max(1,Math.floor((w-10)/cw)),rows=Math.max(1,Math.ceil(n.cap/nc));
+    if(rows*ch+10<=maxH||cw===3){n.cw=cw;n.ch=ch;n.cols=nc;n.rows=rows;n.h=rows*ch+10;n.w=w;return;}}};
+  const line=(list,widths,maxH)=>{let x=X0,mh=0;list.forEach((n,i)=>{fit(n,widths[i],maxH);n.x=x;n.y=y+LBL;x+=widths[i]+8;mh=Math.max(mh,n.h);});y+=LBL+mh+12;};
+  fsed.w=250;fsed.x=(W-250)/2;fsed.y=y+LBL;fsed.h=92;fsed.cw=8;fsed.ch=12.8;fsed.cols=30;fsed.rows=6;y=fsed.y+fsed.h+34;
+  HEADS.push({t:'THREE BUCKETS FROM THE FSED',y,nodes:[home,amc,hah]});y+=6;
+  line([home],[GW],150);line([amc,hah],[GW-8-135,135],130);
+  const pw=(GW-16)/3;
+  cols.forEach((list,s)=>{const l=list.filter(n=>n!==hah);y+=14;HEADS.push({t:(ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),y,nodes:l});y+=6;
+    for(let i=0;i<l.length;i+=3){const part=l.slice(i,i+3);line(part,part.map(()=>pw),120);}});
+  y+=14;HEADS.push({t:'AFTER HOSPITAL OR HOME CARE',y,nodes:[dis]});y+=6;
+  line([dis],[GW],150);H=Math.ceil(y+4);
+}
+function follow(){
+  const hot=links.filter(l=>l.hot);let ns=[];
+  if(idx>=steps.length-1)ns=[dis];
+  else if(hot.length){const onlyDis=hot.every(l=>l.to===dis);hot.forEach(l=>{ns.push(l.from);if(l.to!==dis||onlyDis)ns.push(l.to);});}
+  const y0=ns.length?Math.min(...ns.map(n=>n.y-64)):0,y1=ns.length?Math.max(...ns.map(n=>n.y+n.h+8)):300;
+  const r=cv.getBoundingClientRect(),sc=r.width/W,capH=document.querySelector('.cap').offsetHeight,barH=document.querySelector('.bar').offsetHeight;
+  const vh=window.innerHeight-capH-barH,span=(y1-y0)*sc,top=r.top+window.scrollY+y0*sc;
+  window.scrollTo({top:Math.max(0,top-capH-(span<vh?(vh-span)/2:8)),behavior:'smooth'});
+}
 function build(){
   applyPeriod();document.getElementById('eyebrow').textContent=PERIOD.eyebrow;
   const ppf=cfg.ppf, nT=Math.max(1,Math.round(TRANSFERS/ppf));
@@ -208,8 +240,10 @@ function build(){
   hah=nodes['0_HAH'];  /* Hospital at Home straight from the FSED is its own bucket, not an AMC first stop */
   layoutCol([home,amc,hah],250,220,70,H-18);
   home.pctOf=amc.pctOf=hah.pctOf=direct+TRANSFERS;
-  dis=nodes.dis={id:'dis',label:'Discharged',color:DIS_COLOR,x:1432,y:96,w:144,h:H-116,cap:nT+6};
+  dis=nodes.dis={id:'dis',label:'Discharged',pctOf:M?direct+TRANSFERS:0,color:DIS_COLOR,x:1432,y:96,w:144,h:H-116,cap:nT+6};
   for(const cw of [14,12,10,9,8,7,6,5,4,3,2]){dis.cw=cw;dis.ch=cw*1.6;dis.cols=Math.floor((dis.w-12)/cw);dis.rows=Math.floor((dis.h-12)/dis.ch);if(dis.cols*dis.rows>=dis.cap)break;}
+  if(M)layoutMobile();
+  cv.style.aspectRatio=W+' / '+H;
   buildSteps(); reset();
   const sc=document.getElementById('scrub'); sc.max=steps.length-1;
   document.getElementById('note').textContent='Each figure is about '+ppf+' patients. '+(cfg.period==='year'
@@ -285,6 +319,7 @@ function jump(i,animateLast){
   if(!(animateLast&&i===idx+1)){reset();snap=true;for(let k=0;k<(animateLast?i:i+1);k++)apply(k);snap=false;}
   if(animateLast)apply(i);
   idx=i;stepEnd=clock+(animateLast?steps[i].dur:1.2);ui();
+  if(M)follow();
 }
 function ui(){
   const st=steps[idx];
@@ -304,13 +339,18 @@ function person(x,y,s){ctx.moveTo(x+s*.24,y-s*.45);ctx.arc(x,y-s*.45,s*.24,0,6.2
   const bx=x-s*.3,by=y-s*.17,bw=s*.6,bh=s*.82,r=s*.27;
   ctx.moveTo(bx+r,by);ctx.arcTo(bx+bw,by,bx+bw,by+bh,r);ctx.lineTo(bx+bw,by+bh);ctx.lineTo(bx,by+bh);ctx.arcTo(bx,by,bx+r,by,r);ctx.closePath();}
 function anchor(l){
-  const a=l.from,b=l.to,x0=a.x+a.w,y0=a.y+a.h/2,x1=b.x,y1=b===dis?clamp(y0,dis.y+24,dis.y+dis.h-24):b.y+b.h/2;
+  const a=l.from,b=l.to;
+  if(M){const mx=a.x+a.w/2;return{x0:mx,y0:a.y+a.h,x1:b===dis?clamp(mx,dis.x+24,dis.x+dis.w-24):b.x+b.w/2,y1:b.y-40};}
+  const x0=a.x+a.w,y0=a.y+a.h/2,x1=b.x,y1=b===dis?clamp(y0,dis.y+24,dis.y+dis.h-24):b.y+b.h/2;
   return{x0,y0,x1,y1};
 }
+function ctl(p){const dx=(p.x1-p.x0)*.5,dy=(p.y1-p.y0)*.5;return M?[p.x0,p.y0+dy,p.x1,p.y1-dy]:[p.x0+dx,p.y0,p.x1-dx,p.y1];}
 function font(px,w,disp){return (w||500)+' '+px+'px '+(disp?'"Space Grotesk",':'')+'Inter,system-ui,sans-serif';}
 function drawPen(n){
   if(n.vis<=.01)return; ctx.globalAlpha=n.vis;
   rr(n.x,n.y,n.w,n.h,7);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=n.color;ctx.stroke();
+  if(M){ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle=C.ink;ctx.font=font(13,600);ctx.fillText((TYPES[n.type]&&TYPES[n.type].short)||n.label,n.x+1,n.y-22);
+    ctx.font=font(14,700);ctx.fillStyle=n.color;ctx.fillText(fmt(n.shown)+(n.pctOf&&n.arr?' · '+pct(n.arr,n.pctOf):''),n.x+1,n.y-6);ctx.globalAlpha=1;return;}
   ctx.textBaseline='alphabetic';ctx.textAlign='left';ctx.fillStyle=C.ink;ctx.font=font(14,600);ctx.fillText((TYPES[n.type]&&TYPES[n.type].short)||n.label,n.x+1,n.y-8);
   ctx.textAlign='right';ctx.font=font(n.pctOf?15:14,700);ctx.fillStyle=n.color;ctx.fillText(fmt(n.shown)+(n.pctOf&&n.arr?' · '+pct(n.arr,n.pctOf):''),n.x+n.w-1,n.y-8);
   ctx.globalAlpha=1;
@@ -321,32 +361,33 @@ function draw(){
   ctx.setTransform(pw/W,0,0,pw/W,0,0);ctx.clearRect(0,0,W,H);readTokens();
   // column headings
   ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.font=font(13,600);
-  cols.forEach((list,s)=>{list=list.filter(n=>n!==hah);const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
+  if(!M)cols.forEach((list,s)=>{list=list.filter(n=>n!==hah);const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
   ctx.globalAlpha=1;
   // links
   ctx.lineCap='butt';
-  links.forEach(l=>{const p=anchor(l),dx=(p.x1-p.x0)*.5;ctx.beginPath();ctx.moveTo(p.x0,p.y0);ctx.bezierCurveTo(p.x0+dx,p.y0,p.x1-dx,p.y1,p.x1,p.y1);
-    ctx.lineWidth=Math.min(64,Math.max(1.5,l.n*79/TRANSFERS));ctx.strokeStyle=l.hot?l.to.color:C.link;ctx.globalAlpha=l.a*(l.hot?.42:.13);ctx.stroke();});
+  links.forEach(l=>{const p=anchor(l),c=ctl(p);ctx.beginPath();ctx.moveTo(p.x0,p.y0);ctx.bezierCurveTo(c[0],c[1],c[2],c[3],p.x1,p.y1);
+    ctx.lineWidth=M?Math.min(22,Math.max(1,l.n*28/TRANSFERS)):Math.min(64,Math.max(1.5,l.n*79/TRANSFERS));ctx.strokeStyle=l.hot?l.to.color:C.link;ctx.globalAlpha=l.a*(l.hot?.42:.13);ctx.stroke();});
   ctx.globalAlpha=1;
   // intro site cards morphing into the FSED pen
   const m=S.merge;
   if(S.intro>.01&&m<.999){
-    const cards=[[SITES.bhp,S.bhpN,150],[SITES.ken,S.kenN,470]];
+    const cards=M?[[SITES.bhp,S.bhpN,160],[SITES.ken,S.kenN,400]]:[[SITES.bhp,S.bhpN,150],[SITES.ken,S.kenN,470]],CX=M?50:560,CW=M?320:440,CH=M?215:230;
     cards.forEach(([site,n,y0])=>{
-      const x=560+(fsed.x-560)*ease(m),y=y0+(fsed.y-y0)*ease(m),w=440+(fsed.w-440)*ease(m),h=230+(fsed.h-230)*ease(m);
+      const x=CX+(fsed.x-CX)*ease(m),y=y0+(fsed.y-y0)*ease(m),w=CW+(fsed.w-CW)*ease(m),h=CH+(fsed.h-CH)*ease(m);
       ctx.globalAlpha=S.intro*(1-clamp((m-.75)*4,0,1));rr(x,y,w,h,10);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=site.color;ctx.stroke();
       ctx.globalAlpha=S.intro*clamp(1-m*2.2,0,1);ctx.textAlign='center';ctx.fillStyle=C.muted;ctx.font=font(22,600);ctx.fillText(site.label,x+w/2,y+56);
-      ctx.fillStyle=C.ink;ctx.font=font(76,700,true);ctx.fillText(fmt(n),x+w/2,y+140);
+      ctx.fillStyle=C.ink;ctx.font=font(M?62:76,700,true);ctx.fillText(fmt(n),x+w/2,y+140);
       ctx.fillStyle=C.muted;ctx.font=font(16,500);ctx.fillText('patients · '+fmt(site.direct)+' discharged home',x+w/2,y+184);
     });ctx.globalAlpha=1;
   }
   // pens
   drawPen(fsed);drawPen(home);drawPen(amc);cols.forEach(l=>l.forEach(drawPen));
-  if(home.vis>.01){ctx.globalAlpha=home.vis;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText('THREE BUCKETS FROM THE FSED',home.x+1,34);ctx.globalAlpha=1;}
-  if(dis.vis>.01){ctx.globalAlpha=dis.vis;rr(dis.x,dis.y,dis.w,dis.h,8);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=dis.color;ctx.stroke();
+  HEADS.forEach(h=>{const v=Math.max(...h.nodes.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText(h.t,11,h.y);ctx.globalAlpha=1;}});
+  if(!M&&home.vis>.01){ctx.globalAlpha=home.vis;ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.fillText('THREE BUCKETS FROM THE FSED',home.x+1,34);ctx.globalAlpha=1;}
+  if(M)drawPen(dis);else if(dis.vis>.01){ctx.globalAlpha=dis.vis;rr(dis.x,dis.y,dis.w,dis.h,8);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=dis.color;ctx.stroke();
     ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font=font(13,600);ctx.textAlign='right';ctx.fillText('DISCHARGED AFTER CARE',dis.x+dis.w,34);ctx.textAlign='left';
     ctx.fillStyle=C.ink;ctx.font=font(36,700,true);ctx.fillText(fmt(dis.shown),dis.x,80);ctx.globalAlpha=1;}
-  if(S.big>.01){ctx.globalAlpha=S.big;ctx.textAlign='center';ctx.fillStyle=C.ink;ctx.font=font(46,700,true);ctx.fillText(fmt(fsed.shown),fsed.x+fsed.w/2,fsed.y+fsed.h/2+8);
+  if(S.big>.01){ctx.globalAlpha=S.big;ctx.textAlign='center';ctx.fillStyle=C.ink;ctx.font=font(M?36:46,700,true);ctx.fillText(fmt(fsed.shown),fsed.x+fsed.w/2,fsed.y+fsed.h/2+8);
     ctx.fillStyle=C.muted;ctx.font=font(14,500);ctx.fillText('patients',fsed.x+fsed.w/2,fsed.y+fsed.h/2+34);ctx.globalAlpha=1;}
   // figures, batched by colour
   const groups=new Map();
@@ -356,8 +397,8 @@ function draw(){
     person(S.heroX,fsed.y+fsed.h/2-(moving?Math.abs(Math.sin(clock*9))*6:0),54);ctx.fillStyle=C.accent;ctx.fill();ctx.globalAlpha=1;}
   // number chips on the active flows
   ctx.font=font(14,700);ctx.textAlign='center';ctx.textBaseline='middle';
-  links.forEach(l=>{if(!l.hot||l.a<.05)return;const p=anchor(l),dx=(p.x1-p.x0)*.5,t=l.to===dis?1-34/Math.max(60,p.x1-p.x0):.7,u=1-t;
-    const bx=u*u*u*p.x0+3*u*u*t*(p.x0+dx)+3*u*t*t*(p.x1-dx)+t*t*t*p.x1,by=u*u*u*p.y0+3*u*u*t*p.y0+3*u*t*t*p.y1+t*t*t*p.y1;
+  links.forEach(l=>{if(!l.hot||l.a<.05)return;const p=anchor(l),c=ctl(p),t=M?(l.to===dis?.18:.8):(l.to===dis?1-34/Math.max(60,p.x1-p.x0):.7),u=1-t;
+    const bx=u*u*u*p.x0+3*u*u*t*c[0]+3*u*t*t*c[2]+t*t*t*p.x1,by=u*u*u*p.y0+3*u*u*t*c[1]+3*u*t*t*c[3]+t*t*t*p.y1;
     const txt=fmt(l.n),tw=ctx.measureText(txt).width+12;ctx.globalAlpha=l.a;rr(bx-tw/2,by-10,tw,20,10);ctx.fillStyle=l.to.color;ctx.fill();
     ctx.fillStyle='#ffffff';ctx.fillText(txt,bx,by+.5);});
   ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
@@ -369,6 +410,7 @@ function frame(now){
   const dt=Math.min(.05,(now-lastT)/1000);lastT=now;clock+=dt*speed;runTweens();
   if(playing&&clock>=stepEnd){if(idx<steps.length-1)jump(idx+1,true);else{playing=false;ui();}}
   draw();
+  if(M){const t=dis.vis>.01?'Discharged after hospital or home care so far: '+fmt(dis.shown):'',el=$('tally');if(el.textContent!==t){el.textContent=t;el.hidden=!t;}}
   if(REC){recFrame();
     if(!playing&&idx>=steps.length-1&&!REC.stopping){if(REC.endAt===null)REC.endAt=clock+2.5;else if(clock>=REC.endAt){REC.stopping=true;REC.mr.stop();}}}
   requestAnimationFrame(frame);

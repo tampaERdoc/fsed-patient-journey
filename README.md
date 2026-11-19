@@ -9,3 +9,8 @@ Open `index.html` in a browser. Controls: play/pause (space), step (arrow keys),
 - **Last 12 months (default):** FSED arrivals and discharges are from the TGH ED Dashboard (Qlik), Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026. "Transfer to AMC" is arrivals minus discharges.
 - **Stops inside AMC:** the October 2026 journey tracker, scaled proportionally to the 12-month transfer count. The split from each stop to the next is estimated to reconcile with the tracker's stop totals.
 - **October 2026 view:** available under "Volumes and scale".
+
+## Versions
+
+- Desktop / slide: https://tampaerdoc.github.io/fsed-patient-journey/
+- Phone (portrait, follows the action as it plays): https://tampaerdoc.github.io/fsed-patient-journey/mobile
