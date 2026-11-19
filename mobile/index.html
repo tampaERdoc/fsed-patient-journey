@@ -107,7 +107,9 @@ const TYPES={
   FS:{label:'Free-Standing ED',color:'#e56b86'}, FM:{label:'Further moves',color:'#9aa8ba'}
 };
 const DIS_COLOR='#5d6a7c', FSED_COLOR='#3f7fd6', HOME_COLOR='#b8892b', AMC_COLOR='#5b62c9';
-const SITES={bhp:{label:'BHP',base:610,transfers:610,color:'#e9788a'},ken:{label:'Kennedy',base:445,transfers:445,color:'#cdbb45'}};
+/* Riverview and North Tampa are planned sites, each modeled at the midpoint of BHP and Kennedy (arrivals and discharges). */
+const SITE_DEFS=[{label:'BHP',arr:30304,dc:21557,color:'#e9788a'},{label:'Kennedy',arr:18548,dc:12901,color:'#cdbb45'},
+  {label:'Riverview',arr:24426,dc:17229,color:'#4fa3c7',isNew:true},{label:'North Tampa',arr:24426,dc:17229,color:'#8a6fd1',isNew:true}];
 const BASE_STAGES=[
  [['EDB',471,{OU:255,DIS:180,SP:14,HAH:12,CDU:10}],['HED',269,{EDB:156,DIS:70,OU:25,CDU:10,SP:5,HAH:3}],
   ['OU',168,{DIS:141,SP:14,HAH:8,OU:5}],['HAH',31,{DIS:26,OU:3,HAH:2}],
@@ -118,7 +120,7 @@ const BASE_STAGES=[
   ['SP',44,{OU:20,DIS:15,FM:9}]],
  [['FM',44,{DIS:44}],['OU',33,{DIS:33}],['HAH',4,{DIS:4}],['SP',2,{DIS:2}]]
 ];
-let STAGES,TRANSFERS,DIR,PERIOD,HOME;
+let STAGES,TRANSFERS,DIRECT,PERIOD,SITEL,SCENES=[];
 /* Month = the tracker's October counts as-is. Year = the same pattern scaled by 365/31 (October run-rate),
    re-rounded so every stop's inflow and outflow still reconcile. */
 /* Source: TGH ED Dashboard (Qlik), Brandon + Kennedy, arrivals 2025-11-18 to 2026-11-17.
@@ -126,15 +128,16 @@ let STAGES,TRANSFERS,DIR,PERIOD,HOME;
    Month, week and day are that year divided down to an average month, week and day.
    Everyone not discharged is split across Hospital at Home and the AMC stops in the October 2026 tracker's proportions. */
 const PER={
-  year:{f:1,ppf:50,span:'Nov 18, 2025 – Nov 17, 2026',when:'in the last 12 months'},
-  month:{f:1/12,ppf:5,span:'average month, Nov 2025 – Nov 2026',when:'in an average month'},
-  week:{f:7/365,ppf:1,span:'average week, Nov 2025 – Nov 2026',when:'in an average week'},
-  day:{f:1/365,ppf:1,span:'average day, Nov 2025 – Nov 2026',when:'on an average day'}};
-function applyPeriod(){
+  year:{f:1,ppf:50,span:'Nov 18, 2025 – Nov 17, 2026',when:'in the last 12 months',per:'a year'},
+  month:{f:1/12,ppf:5,span:'average month, Nov 2025 – Nov 2026',when:'in an average month',per:'a month'},
+  week:{f:7/365,ppf:1,span:'average week, Nov 2025 – Nov 2026',when:'in an average week',per:'a week'},
+  day:{f:1/365,ppf:1,span:'average day, Nov 2025 – Nov 2026',when:'on an average day',per:'a day'}};
+function applyPeriod(k){
   if(!PER[cfg.period])cfg.period='year';
-  const P=PER[cfg.period],f=P.f,arr=[Math.round(30304*f),Math.round(18548*f)],dc=[Math.round(21557*f),Math.round(12901*f)];
-  SITES.bhp.transfers=arr[0]-dc[0];SITES.ken.transfers=arr[1]-dc[1];TRANSFERS=SITES.bhp.transfers+SITES.ken.transfers;
-  DIR={bhp:dc[0],ken:dc[1]};HOME=null;PERIOD={eyebrow:'Brandon + Kennedy · '+P.span,when:P.when};SITES.bhp.direct=dc[0];SITES.ken.direct=dc[1];
+  const P=PER[cfg.period],f=P.f;
+  SITEL=SITE_DEFS.slice(0,k).map(d=>({label:d.label,color:d.color,isNew:!!d.isNew,n:Math.round(d.arr*f),direct:Math.round(d.dc*f)}));
+  DIRECT=SITEL.reduce((a,x)=>a+x.direct,0);TRANSFERS=SITEL.reduce((a,x)=>a+x.n-x.direct,0);
+  PERIOD={eyebrow:(k>2?'Projected four-FSED system · BHP + Kennedy + Riverview + North Tampa · ':'Brandon + Kennedy · ')+P.span,when:P.when};
   let totals=alloc(TRANSFERS,BASE_STAGES[0].map(n=>n[1]));
   STAGES=BASE_STAGES.map((stg,s)=>{const inflow={};
     const res=stg.map(([t,,out],i)=>{const keys=Object.keys(out),a=alloc(totals[i],keys.map(k=>out[k])),o={};
@@ -224,7 +227,7 @@ function layoutMobile(){
 }
 function follow(){
   const hot=links.filter(l=>l.hot);let ns=[];
-  if(idx>=steps.length-1)ns=[dis];
+  if(steps[idx]&&steps[idx].end)ns=[dis];
   else if(S.focus)ns=S.focus.view;
   else if(hot.length){const onlyDis=hot.every(l=>l.to===dis);hot.forEach(l=>{ns.push(l.from);if(l.to!==dis||onlyDis)ns.push(l.to);});}
   const y0=ns.length?Math.min(...ns.map(n=>n.y-64)):0,y1=ns.length?Math.max(...ns.map(n=>n.y+n.h+8)):300;
@@ -232,18 +235,18 @@ function follow(){
   const vh=window.innerHeight-capH-barH,span=(y1-y0)*sc,top=r.top+window.scrollY+y0*sc;
   window.scrollTo({top:Math.max(0,top-capH-(span<vh?(vh-span)/2:8)),behavior:'smooth'});
 }
-function build(){
-  applyPeriod();document.getElementById('eyebrow').textContent=PERIOD.eyebrow;
+function makeScene(k){
+  applyPeriod(k);
   const ppf=cfg.ppf, nT=Math.max(1,Math.round(TRANSFERS/ppf));
-  nodes={};cols=[];
-  fsed=nodes.fsed={id:'fsed',label:'FSED',color:FSED_COLOR,cap:130};
+  nodes={};cols=[];H=M?1500:860;HEADS=[];
+  fsed=nodes.fsed={id:'fsed',label:k>2?'4 FSEDs':'FSED',color:FSED_COLOR,cap:130};
   const colX=[520,746,972,1198];
   STAGES.forEach((st,s)=>{
     const list=st.map(([t,total,out])=>nodes[s+'_'+t]={id:s+'_'+t,type:t,stage:s,label:TYPES[t].label,color:TYPES[t].color,total,out,cap:Math.ceil(total/ppf)+2});
     layoutCol(list.filter(n=>n.total>0&&!(s===0&&n.type==='HAH')),colX[s],168,70,H-18); cols.push(list);
   });
   layoutCol([fsed],24,180,70,H-18);
-  const direct=DIR.bhp+DIR.ken;
+  const direct=DIRECT;
   const nD=Math.round(direct/ppf);
   home=nodes.home={id:'home',label:'Discharged home',color:HOME_COLOR,cap:nD+3};
   amc=nodes.amc={id:'amc',label:'Transfer to AMC',color:AMC_COLOR,cap:nT+2};
@@ -253,15 +256,26 @@ function build(){
   dis=nodes.dis={id:'dis',label:'Discharged',pctOf:M?direct+TRANSFERS:0,color:DIS_COLOR,x:1432,y:96,w:144,h:H-116,cap:nT+6};
   for(const cw of [14,12,10,9,8,7,6,5,4,3,2]){dis.cw=cw;dis.ch=cw*1.6;dis.cols=Math.floor((dis.w-12)/cw);dis.rows=Math.floor((dis.h-12)/dis.ch);if(dis.cols*dis.rows>=dis.cap)break;}
   if(M)layoutMobile();
-  cv.style.aspectRatio=W+' / '+H;
-  buildSteps(); reset();
+  return{k,STAGES,TRANSFERS,DIRECT,PERIOD,SITEL,nodes,cols,fsed,dis,home,amc,hah,H,HEADS};
+}
+/* Two scenes share one timeline: today's two FSEDs, then the projected four-FSED system. use() swaps which one is live. */
+function use(sc){
+  ({STAGES,TRANSFERS,DIRECT,PERIOD,SITEL,nodes,cols,fsed,dis,home,amc,hah,H,HEADS}=sc);
+  cv.style.aspectRatio=W+' / '+H;const eb=document.getElementById('eyebrow');if(eb.textContent!==PERIOD.eyebrow)eb.textContent=PERIOD.eyebrow;
+}
+const freshS=()=>({intro:0,merge:0,big:0,heroX:-80,heroA:0,n0:0,n1:0,n2:0,n3:0,newA:1,dim:0,focus:null});
+function build(){
+  const ppf=cfg.ppf;
+  SCENES=[];SCENES.push(makeScene(2));SCENES.push(makeScene(4));
+  steps=[];SCENES.forEach((sc,i)=>{use(sc);buildSteps(i);});
+  reset();
   const sc=document.getElementById('scrub'); sc.max=steps.length-1;
-  document.getElementById('note').textContent='Each figure is '+(ppf===1?'one patient':'about '+ppf+' patients')+'. Arrivals and discharges are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026'+(cfg.period==='year'?'':', divided down to an average '+cfg.period)+'. Everyone not discharged from the FSED is split into Transfer to AMC and Hospital at Home in October 2026’s proportions; the stops after that are the October journey tracker scaled to match, and the split from each stop to the next is estimated.';
+  document.getElementById('note').textContent='Each figure is '+(ppf===1?'one patient':'about '+ppf+' patients')+'. Arrivals and discharges are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026'+(cfg.period==='year'?'':', divided down to an average '+cfg.period)+'. Everyone not discharged from the FSED is split into Transfer to AMC and Hospital at Home in October 2026’s proportions; the stops after that are the October journey tracker scaled to match, and the split from each stop to the next is estimated. The second half is a projection, not observed data: Riverview and North Tampa are each set to the midpoint of BHP and Kennedy, and every flow is scaled up in the same proportions.';
 }
 function reset(){
   figs=[];tweens=[];links=[];
-  for(const k in nodes){const n=nodes[k];n.figs=[];n.arr=0;n.shown=0;n.vis=0;n.slotN=0;n.al=null;}
-  S={intro:0,merge:0,big:0,heroX:-80,heroA:0,bhpN:0,kenN:0,dim:0,focus:null};
+  SCENES.forEach(sc=>{for(const k in sc.nodes){const n=sc.nodes[k];n.figs=[];n.arr=0;n.shown=0;n.vis=0;n.slotN=0;n.al=null;}});
+  use(SCENES[0]);S=freshS();
 }
 
 /* ---------- step operations ---------- */
@@ -300,17 +314,25 @@ function split(node){
 function outText(node){
   return Object.entries(node.out).filter(e=>e[1]>0).sort((a,b)=>b[1]-a[1]).map(([t,n])=>fmt(n)+' '+(t==='DIS'?'discharged':'to '+TYPES[t].label)).join(' · ');
 }
-function buildSteps(){
-  steps=[];
-  const add=(title,sub,dur,fn,ph)=>steps.push({title,sub,dur,fn,ph});
-  const bT=SITES.bhp.transfers+DIR.bhp,kT=SITES.ken.transfers+DIR.ken,tot=bT+kT,direct=DIR.bhp+DIR.ken;
+function buildSteps(act){
+  const add=(title,sub,dur,fn,ph,end)=>steps.push({title,sub,dur,fn,ph,end});
+  const sites=SITEL,tot=sites.reduce((a,x)=>a+x.n,0),direct=DIRECT,per=PER[cfg.period].per;
   const ppf=cfg.ppf,nT=Math.max(1,Math.round(TRANSFERS/ppf)),nD=Math.round(direct/ppf);
   const al0=alloc(nT,cols[0].map(c=>c.total)),nH=al0[cols[0].indexOf(hah)],nA=nT-nH,AMCN=TRANSFERS-hah.total;
-  add('Two free-standing EDs','BHP saw '+fmt(bT)+' patients and Kennedy saw '+fmt(kT)+' '+PERIOD.when+'.',3.2,()=>{
-    tween(S,'intro',1,.7);tween(S,'bhpN',bT,1.6,.3);tween(S,'kenN',kT,1.6,.3);},true);
-  add('Together they are the FSED',fmt(tot)+' patients through one front door.',3.2,()=>{
-    S.intro=1;S.bhpN=bT;S.kenN=kT; tween(S,'merge',1,1.5);tween(fsed,'vis',1,.6,.9);tween(S,'big',1,.6,1);fsed.arr=tot;tween(fsed,'shown',tot,1.2,.9);},true);
-  add('A patient walks in','Follow them from the FSED door to their eventual discharge.',2.8,()=>{
+  const merge=()=>{S.intro=1;S.newA=1;sites.forEach((x,i)=>S['n'+i]=x.n);tween(S,'merge',1,1.5);tween(fsed,'vis',1,.6,.9);tween(S,'big',1,.6,1);fsed.arr=tot;tween(fsed,'shown',tot,1.2,.9);};
+  const P0=SCENES[0],tot0=P0.SITEL.reduce((a,x)=>a+x.n,0),AMC0=P0.TRANSFERS-P0.hah.total;
+  if(!act){
+    add('Two free-standing EDs','BHP saw '+fmt(sites[0].n)+' patients and Kennedy saw '+fmt(sites[1].n)+' '+PERIOD.when+'.',3.2,()=>{
+      tween(S,'intro',1,.7);tween(S,'n0',sites[0].n,1.6,.3);tween(S,'n1',sites[1].n,1.6,.3);},true);
+    add('Together they are the FSED',fmt(tot)+' patients through one front door.',3.2,merge,true);
+  }else{
+    const sc=SCENES[1];
+    add('Now add two more FSEDs','Riverview and North Tampa, each modeled at the midpoint of BHP and Kennedy: '+fmt(sites[2].n)+' patients '+per+'.',5,()=>{
+      figs=[];tweens=[];links=[];use(sc);S=freshS();
+      tween(S,'intro',1,.6);S.n0=sites[0].n;S.n1=sites[1].n;S.newA=0;tween(S,'newA',1,.7,1);tween(S,'n2',sites[2].n,1.5,1);tween(S,'n3',sites[3].n,1.5,1);},true);
+    add('Four FSEDs, one system',fmt(tot)+' patients '+per+' through four front doors, up from '+fmt(tot0)+'. Every flow stream is scaled up in the same proportions.',4,merge,true);
+  }
+  add('A patient walks in',act?'Follow them from any of the four FSED doors to their eventual discharge.':'Follow them from the FSED door to their eventual discharge.',2.8,()=>{
     S.heroA=1;tween(S,'heroX',fsed.x+fsed.w/2,2);tween(S,'big',0,.5);});
   add('Bucket 1 · Discharged home',fmt(direct)+' of '+fmt(tot)+' ('+pct(direct,tot)+') are discharged from the FSED and never go to AMC.',5.5,()=>{
     cool();tween(S,'heroA',0,.4);stream(home,nD,direct,2.8);});
@@ -334,7 +356,9 @@ function buildSteps(){
   const last=cols[3].reduce((a,n)=>a+n.total,0);
   if(last)add('Fourth stop and beyond','The last '+fmt(last)+' patients finish their hospital course and are discharged.',4,()=>{cool();cols[3].forEach(n=>split(n));});
   const byStage=STAGES.map(st=>st.reduce((a,[, ,o])=>a+(o.DIS||0),0));
-  add('Every patient followed to discharge',fmt(tot)+' arrivals: '+fmt(direct)+' discharged home ('+pct(direct,tot)+'), '+fmt(AMCN)+' transferred to AMC ('+pct(AMCN,tot)+') and '+fmt(hah.total)+' to Hospital at Home ('+pct(hah.total,tot)+'). Everyone in buckets 2 and 3 has now been followed to discharge.',4,()=>{cool();});
+  const mix=fmt(direct)+' discharged home ('+pct(direct,tot)+'), '+fmt(AMCN)+' transferred to AMC ('+pct(AMCN,tot)+') and '+fmt(hah.total)+' to Hospital at Home ('+pct(hah.total,tot)+').';
+  if(!act)add('Every patient followed to discharge',fmt(tot)+' arrivals: '+mix+' Everyone in buckets 2 and 3 has now been followed to discharge.',4,()=>{cool();},false,true);
+  else add('Four FSEDs · every patient followed to discharge',fmt(tot)+' arrivals '+per+': '+mix+' AMC transfers rise from '+fmt(AMC0)+' to '+fmt(AMCN)+' '+per+'.',4,()=>{cool();},false,true);
 }
 function apply(i){steps[i].fn();}
 function jump(i,animateLast){
@@ -394,13 +418,16 @@ function draw(){
   // intro site cards morphing into the FSED pen
   const m=S.merge;
   if(S.intro>.01&&m<.999){
-    const cards=M?[[SITES.bhp,S.bhpN,160],[SITES.ken,S.kenN,400]]:[[SITES.bhp,S.bhpN,150],[SITES.ken,S.kenN,470]],CX=M?50:560,CW=M?320:440,CH=M?215:230;
-    cards.forEach(([site,n,y0])=>{
+    const four=SITEL.length>2,small=M&&four;
+    const pos=M?(four?[[15,150],[220,150],[15,330],[220,330]]:[[50,160],[50,400]]):(four?[[400,150],[880,150],[400,470],[880,470]]:[[560,150],[560,470]]);
+    const CW=M?(four?185:320):440,CH=M?(four?150:215):230;
+    SITEL.forEach((site,i)=>{
+      const CX=pos[i][0],y0=pos[i][1],na=site.isNew?S.newA:1,n=S['n'+i];
       const x=CX+(fsed.x-CX)*ease(m),y=y0+(fsed.y-y0)*ease(m),w=CW+(fsed.w-CW)*ease(m),h=CH+(fsed.h-CH)*ease(m);
-      ctx.globalAlpha=S.intro*(1-clamp((m-.75)*4,0,1));rr(x,y,w,h,10);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=site.color;ctx.stroke();
-      ctx.globalAlpha=S.intro*clamp(1-m*2.2,0,1);ctx.textAlign='center';ctx.fillStyle=C.muted;ctx.font=font(22,600);ctx.fillText(site.label,x+w/2,y+56);
-      ctx.fillStyle=C.ink;ctx.font=font(M?62:76,700,true);ctx.fillText(fmt(n),x+w/2,y+140);
-      ctx.fillStyle=C.muted;ctx.font=font(16,500);ctx.fillText('patients · '+fmt(site.direct)+' discharged home',x+w/2,y+184);
+      ctx.globalAlpha=S.intro*na*(1-clamp((m-.75)*4,0,1));rr(x,y,w,h,10);ctx.fillStyle=C.pen;ctx.fill();ctx.lineWidth=3;ctx.strokeStyle=site.color;if(site.isNew)ctx.setLineDash([9,6]);ctx.stroke();ctx.setLineDash([]);
+      ctx.globalAlpha=S.intro*na*clamp(1-m*2.2,0,1);ctx.textAlign='center';ctx.fillStyle=C.muted;ctx.font=font(small?16:22,600);ctx.fillText(site.label+(site.isNew?' · new':''),x+w/2,y+(small?36:56));
+      ctx.fillStyle=C.ink;ctx.font=font(small?38:M?62:76,700,true);ctx.fillText(fmt(n),x+w/2,y+(small?86:140));
+      ctx.fillStyle=C.muted;ctx.font=font(small?12:16,500);ctx.fillText((small?'':'patients · ')+fmt(site.direct)+' discharged home',x+w/2,y+(small?118:184));
     });ctx.globalAlpha=1;
   }
   // pens
