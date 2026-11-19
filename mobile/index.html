@@ -39,6 +39,10 @@ h1{font-family:var(--display);font-size:clamp(20px,2.6vw,32px);line-height:1.15;
 .stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
 canvas{display:block;width:100%;min-width:760px;aspect-ratio:1600/860}
 .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:7px 12px}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 #tally{margin:4px 0 0;font-size:13px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
 body.m .cap{position:sticky;top:0;z-index:5;background:var(--bg);padding-block:8px;min-height:0}
 body.m .bar{position:sticky;bottom:0;z-index:5;background:var(--bg);padding-block:8px}
@@ -78,13 +82,13 @@ summary{cursor:pointer;font-weight:600}
     <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Step">
     <span id="count"></span>
     <select id="speed" aria-label="Speed"><option value="0.6">0.6×</option><option value="1" selected>1×</option><option value="1.6">1.6×</option><option value="2.5">2.5×</option></select>
+    <div class="seg" id="seg" role="group" aria-label="Time period"><button data-p="year">Year</button><button data-p="month">Month</button><button data-p="week">Week</button><button data-p="day">Day</button></div>
     <button id="rec" hidden title="Plays the whole animation once and saves it as a video file for a slide">Record video</button>
   </div>
   <details id="settings">
     <summary>Volumes and scale</summary>
     <div class="set">
-      <label for="inPeriod">Period<select id="inPeriod"><option value="year">Last 12 months (actual)</option><option value="month">October 2026</option></select></label>
-      <label for="inPpf">Patients per figure<select id="inPpf"><option>2</option><option>5</option><option>10</option><option>25</option><option>50</option><option>100</option><option>200</option></select></label>
+      <label for="inPpf">Patients per figure<select id="inPpf"><option>1</option><option>2</option><option>5</option><option>10</option><option>25</option><option>50</option><option>100</option><option>200</option></select></label>
       <button id="apply">Apply</button>
     </div>
   </details>
@@ -117,15 +121,20 @@ const BASE_STAGES=[
 let STAGES,TRANSFERS,DIR,PERIOD,HOME;
 /* Month = the tracker's October counts as-is. Year = the same pattern scaled by 365/31 (October run-rate),
    re-rounded so every stop's inflow and outflow still reconcile. */
+/* Source: TGH ED Dashboard (Qlik), Brandon + Kennedy, arrivals 2025-11-18 to 2026-11-17.
+   Only two Qlik numbers are used per site: arrivals (30,304 / 18,548) and disposition DISCHARGE (21,557 / 12,901).
+   Month, week and day are that year divided down to an average month, week and day.
+   Everyone not discharged is split across Hospital at Home and the AMC stops in the October 2026 tracker's proportions. */
+const PER={
+  year:{f:1,ppf:50,span:'Nov 18, 2025 – Nov 17, 2026',when:'in the last 12 months'},
+  month:{f:1/12,ppf:5,span:'average month, Nov 2025 – Nov 2026',when:'in an average month'},
+  week:{f:7/365,ppf:1,span:'average week, Nov 2025 – Nov 2026',when:'in an average week'},
+  day:{f:1/365,ppf:1,span:'average day, Nov 2025 – Nov 2026',when:'on an average day'}};
 function applyPeriod(){
-  const yr=cfg.period==='year';
-  /* Year: TGH ED Dashboard (Qlik), Brandon + Kennedy, arrivals 2025-11-18 to 2026-11-17, by disposition.
-     Only two Qlik numbers are used per site: arrivals and disposition DISCHARGE (21,557 Brandon, 12,901 Kennedy).
-     Transfer to AMC = arrivals minus discharges; its stops are the October tracker scaled proportionally. Month: October 2026 journey tracker and FSED dashboard. */
-  const P=yr?{arr:[30304,18548],tr:[30304-21557,18548-12901],home:null,eyebrow:'Brandon + Kennedy · Nov 18, 2025 – Nov 17, 2026',when:'in the last 12 months'}
-            :{arr:[2580,1844],tr:[610,445],home:null,eyebrow:'Brandon + Kennedy · Oct 1–31, 2026',when:'in October'};
-  SITES.bhp.transfers=P.tr[0];SITES.ken.transfers=P.tr[1];TRANSFERS=P.tr[0]+P.tr[1];
-  DIR={bhp:P.arr[0]-P.tr[0],ken:P.arr[1]-P.tr[1]};HOME=P.home;PERIOD=P;SITES.bhp.direct=DIR.bhp;SITES.ken.direct=DIR.ken;
+  if(!PER[cfg.period])cfg.period='year';
+  const P=PER[cfg.period],f=P.f,arr=[Math.round(30304*f),Math.round(18548*f)],dc=[Math.round(21557*f),Math.round(12901*f)];
+  SITES.bhp.transfers=arr[0]-dc[0];SITES.ken.transfers=arr[1]-dc[1];TRANSFERS=SITES.bhp.transfers+SITES.ken.transfers;
+  DIR={bhp:dc[0],ken:dc[1]};HOME=null;PERIOD={eyebrow:'Brandon + Kennedy · '+P.span,when:P.when};SITES.bhp.direct=dc[0];SITES.ken.direct=dc[1];
   let totals=alloc(TRANSFERS,BASE_STAGES[0].map(n=>n[1]));
   STAGES=BASE_STAGES.map((stg,s)=>{const inflow={};
     const res=stg.map(([t,,out],i)=>{const keys=Object.keys(out),a=alloc(totals[i],keys.map(k=>out[k])),o={};
@@ -139,8 +148,8 @@ const ORD=['First','Second','Third','Fourth'];
 /* FSED arrivals: 142.7/day x 31 days = 4,424 (FSED Update 11.19.26 deck, ED Dashboard, Oct 2026).
    Site split read off the arrivals chart (about 83/day Brandon, 59/day Kennedy), so it is approximate.
    Direct discharges = site arrivals minus the tracker's hospital-bound encounters. */
-let cfg={bhpDirect:1970,kenDirect:1399,ppf:50,period:'year',placeholder:false,edited:false};
-try{const s=JSON.parse(localStorage.getItem('fsedJourneyCfg4')||'null'); if(s&&typeof s==='object') cfg=Object.assign(cfg,s);}catch(e){}
+let cfg={ppf:50,period:'year'};
+try{const s=JSON.parse(localStorage.getItem('fsedJourneyCfg5')||'null'); if(s&&typeof s==='object') cfg=Object.assign(cfg,s);}catch(e){}
 const fmt=n=>Math.round(n).toLocaleString('en-US');
 const pct=(n,d)=>{const v=d?n/d*100:0;return (v>0&&v<10?v.toFixed(1):Math.round(v))+'%';};
 
@@ -208,7 +217,7 @@ function layoutMobile(){
   HEADS.push({t:'THREE BUCKETS FROM THE FSED',y,nodes:[home,amc,hah]});y+=6;
   line([home],[GW],150);line([amc,hah],[GW-8-135,135],130);
   const pw=(GW-16)/3;
-  cols.forEach((list,s)=>{const l=list.filter(n=>n!==hah);y+=14;HEADS.push({t:(ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),y,nodes:l});y+=6;
+  cols.forEach((list,s)=>{const l=list.filter(n=>n!==hah&&n.total>0);if(!l.length)return;y+=14;HEADS.push({t:(ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),y,nodes:l});y+=6;
     for(let i=0;i<l.length;i+=3){const part=l.slice(i,i+3);line(part,part.map(()=>pw),120);}});
   y+=14;HEADS.push({t:'AFTER HOSPITAL OR HOME CARE',y,nodes:[dis]});y+=6;
   line([dis],[GW],150);H=Math.ceil(y+4);
@@ -230,7 +239,7 @@ function build(){
   const colX=[520,746,972,1198];
   STAGES.forEach((st,s)=>{
     const list=st.map(([t,total,out])=>nodes[s+'_'+t]={id:s+'_'+t,type:t,stage:s,label:TYPES[t].label,color:TYPES[t].color,total,out,cap:Math.ceil(total/ppf)+2});
-    layoutCol(s===0?list.filter(n=>n.type!=='HAH'):list,colX[s],168,70,H-18); cols.push(list);
+    layoutCol(list.filter(n=>n.total>0&&!(s===0&&n.type==='HAH')),colX[s],168,70,H-18); cols.push(list);
   });
   layoutCol([fsed],24,180,70,H-18);
   const direct=DIR.bhp+DIR.ken;
@@ -246,9 +255,7 @@ function build(){
   cv.style.aspectRatio=W+' / '+H;
   buildSteps(); reset();
   const sc=document.getElementById('scrub'); sc.max=steps.length-1;
-  document.getElementById('note').textContent='Each figure is about '+ppf+' patients. '+(cfg.period==='year'
-    ?'Arrivals, discharges and transfers are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026; Everyone not discharged from the FSED is split into Transfer to AMC and Hospital at Home in October’s proportions. The stops after that are the October 2026 journey tracker scaled proportionally to that 12-month count, and the split from each stop to the next is estimated.'
-    :'Stop totals match the October 2026 journey tracker ('+fmt(TRANSFERS)+' hospital-bound encounters). FSED arrivals are 142.7 a day × 31 days with the site split read off the chart, and the split from each stop to the next is estimated.');
+  document.getElementById('note').textContent='Each figure is '+(ppf===1?'one patient':'about '+ppf+' patients')+'. Arrivals and discharges are actual counts from the TGH ED Dashboard for Brandon + Kennedy, arrivals Nov 18, 2025 to Nov 17, 2026'+(cfg.period==='year'?'':', divided down to an average '+cfg.period)+'. Everyone not discharged from the FSED is split into Transfer to AMC and Hospital at Home in October 2026’s proportions; the stops after that are the October journey tracker scaled to match, and the split from each stop to the next is estimated.';
 }
 function reset(){
   figs=[];tweens=[];links=[];
@@ -273,12 +280,12 @@ function stream(to,k,n,spread){
   const l={from:fsed,to,n,a:0,hot:true};links.push(l);tween(l,'a',1,.5,.4);
 }
 function split(node){
-  const outs=Object.entries(node.out).map(([t,n])=>[t==='DIS'?dis:nodes[(node.stage+1)+'_'+t],n]);
+  const outs=Object.entries(node.out).filter(e=>e[1]>0).map(([t,n])=>[t==='DIS'?dis:nodes[(node.stage+1)+'_'+t],n]);
   const al=alloc(node.figs.length,outs.map(o=>o[1]));
   outs.forEach(([to,n],j)=>send(node,to,n,al[j],j*.28));
 }
 function outText(node){
-  return Object.entries(node.out).sort((a,b)=>b[1]-a[1]).map(([t,n])=>fmt(n)+' '+(t==='DIS'?'discharged':'to '+TYPES[t].label)).join(' · ');
+  return Object.entries(node.out).filter(e=>e[1]>0).sort((a,b)=>b[1]-a[1]).map(([t,n])=>fmt(n)+' '+(t==='DIS'?'discharged':'to '+TYPES[t].label)).join(' · ');
 }
 function buildSteps(){
   steps=[];
@@ -296,20 +303,20 @@ function buildSteps(){
     cool();tween(S,'heroA',0,.4);stream(home,nD,direct,2.8);});
   add('Bucket 2 · Transfer to AMC',fmt(AMCN)+' of '+fmt(tot)+' ('+pct(AMCN,tot)+') leave the FSED for the main campus.',4.5,()=>{
     cool();stream(amc,nA,AMCN,1.8);});
-  add('Bucket 3 · Hospital at Home',fmt(hah.total)+' of '+fmt(tot)+' ('+pct(hah.total,tot)+') are admitted to Hospital at Home straight from the FSED: not discharged, and not transferred to AMC.',4,()=>{
+  if(hah.total)add('Bucket 3 · Hospital at Home',fmt(hah.total)+' of '+fmt(tot)+' ('+pct(hah.total,tot)+') are admitted to Hospital at Home straight from the FSED: not discharged, and not transferred to AMC.',4,()=>{
     cool();stream(hah,nH,hah.total,1);});
   cols[0].forEach((n,i)=>{
-    if(n===hah)return;
+    if(n===hah||!n.total)return;
     add('Transfer to AMC → '+n.label,fmt(n.total)+' of '+fmt(AMCN)+' transfers ('+pct(n.total,AMCN)+') go here first.',n.total<TRANSFERS*.04?2.2:3,()=>{
       cool();send(amc,n,n.total,al0[i]);});
     add('From '+n.label+', where next?','Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
   });
-  add('From Hospital at Home (bucket 3), where next?','Of '+fmt(hah.total)+': '+outText(hah)+'.',3,()=>{cool();split(hah);});
-  for(let s=1;s<3;s++)cols[s].forEach(n=>{
+  if(hah.total)add('From Hospital at Home (bucket 3), where next?','Of '+fmt(hah.total)+': '+outText(hah)+'.',3,()=>{cool();split(hah);});
+  for(let s=1;s<3;s++)cols[s].forEach(n=>{if(!n.total)return;
     add(ORD[s]+' stop · '+n.label,'Of '+fmt(n.total)+': '+outText(n)+'.',n.total<TRANSFERS*.01?1.8:n.total<TRANSFERS*.04?2.8:4,()=>{cool();split(n);});
   });
   const last=cols[3].reduce((a,n)=>a+n.total,0);
-  add('Fourth stop and beyond','The last '+fmt(last)+' patients finish their hospital course and are discharged.',4,()=>{cool();cols[3].forEach(n=>split(n));});
+  if(last)add('Fourth stop and beyond','The last '+fmt(last)+' patients finish their hospital course and are discharged.',4,()=>{cool();cols[3].forEach(n=>split(n));});
   const byStage=STAGES.map(st=>st.reduce((a,[, ,o])=>a+(o.DIS||0),0));
   add('Every patient followed to discharge',fmt(tot)+' arrivals: '+fmt(direct)+' discharged home ('+pct(direct,tot)+'), '+fmt(AMCN)+' transferred to AMC ('+pct(AMCN,tot)+') and '+fmt(hah.total)+' to Hospital at Home ('+pct(hah.total,tot)+'). Everyone in buckets 2 and 3 has now been followed to discharge.',4,()=>{cool();});
 }
@@ -361,7 +368,7 @@ function draw(){
   ctx.setTransform(pw/W,0,0,pw/W,0,0);ctx.clearRect(0,0,W,H);readTokens();
   // column headings
   ctx.textAlign='left';ctx.textBaseline='alphabetic';ctx.font=font(13,600);
-  if(!M)cols.forEach((list,s)=>{list=list.filter(n=>n!==hah);const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
+  if(!M)cols.forEach((list,s)=>{list=list.filter(n=>n!==hah&&n.total>0);if(!list.length)return;const v=Math.max(...list.map(n=>n.vis));if(v>.01){ctx.globalAlpha=v;ctx.fillStyle=C.muted;ctx.fillText((ORD[s]+(s===3?' stop +':' stop')).toUpperCase(),list[0].x+1,34);}});
   ctx.globalAlpha=1;
   // links
   ctx.lineCap='butt';
@@ -432,11 +439,13 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='ArrowRight'){e.preventDefault();$('next').onclick();}
   else if(e.key==='ArrowLeft'){e.preventDefault();$('prev').onclick();}
 });
-$('inPpf').value=cfg.ppf;$('inPeriod').value=cfg.period;
-$('inPeriod').onchange=e=>{$('inPpf').value=e.target.value==='year'?50:5;};
+$('inPpf').value=cfg.ppf;
+function markSeg(){document.querySelectorAll('#seg button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.p===cfg.period?'true':'false'));}
+function saveCfg(){try{localStorage.setItem('fsedJourneyCfg5',JSON.stringify(cfg));}catch(e){}}
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{cfg.period=b.dataset.p;cfg.ppf=PER[cfg.period].ppf;$('inPpf').value=cfg.ppf;markSeg();saveCfg();build();idx=-1;playing=true;jump(0,true);});
+markSeg();
 $('apply').onclick=()=>{
-  cfg.period=$('inPeriod').value;cfg.ppf=+$('inPpf').value||5;
-  try{localStorage.setItem('fsedJourneyCfg4',JSON.stringify(cfg));}catch(e){}
+  cfg.ppf=+$('inPpf').value||5;saveCfg();
   build();idx=-1;playing=true;jump(0,true);
 };
 
